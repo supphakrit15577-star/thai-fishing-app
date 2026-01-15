@@ -26,7 +26,8 @@ def load_spots():
     try:
         res = supabase.table("spots").select("*").execute()
         return pd.DataFrame(res.data)
-    except:
+    except Exception as e:
+        st.error(f"Error loading data: {e}") # แสดงข้อผิดพลาดถ้าดึงไม่ได้
         return pd.DataFrame(columns=['name', 'lat', 'lon', 'fish_type', 'description', 'image_url'])
 
 def get_real_water_level(dam_name):
