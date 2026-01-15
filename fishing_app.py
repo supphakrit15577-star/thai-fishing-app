@@ -72,8 +72,40 @@ st.markdown("""
 st.title("🎣 แผนที่นักตกปลาไทย (Pro)")
 
 # ดึง GPS จากเครื่อง
-user_loc = streamlit_js_eval(js_expressions='new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition((pos) => { resolve(pos.coords); }, (err) => { reject(err); }); })', key='location')
-curr_lat, curr_lon = (user_loc['latitude'], user_loc['longitude']) if user_loc else (13.7563, 100.5018)
+user_loc = streamlit_js_eval(
+    js_expressions="""
+    new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+            reject('Geolocation not supported');
+        }
+        // ใช้ watchPosition แทน getCurrentPosition เพื่อติดตามการเคลื่อนที่
+        navigator.geolocation.watchPosition(
+            (pos) => { 
+                resolve({
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy
+                }); 
+            },
+            (err) => { reject(err); },
+            { 
+                enableHighAccuracy: true,  // ใช้ GPS จริงเพื่อให้แม่นยำที่สุด
+                timeout: 10000,            // รอสัญญาณ 10 วินาที
+                maximumAge: 0              // ไม่ใช้ข้อมูลเก่าจาก Cache
+            }
+        );
+    })
+    """, 
+    key='watch_location'
+)
+
+if user_loc:
+    curr_lat = user_loc['latitude']
+    curr_lon = user_loc['longitude']
+    # แสดงความแม่นยำใน Sidebar (เผื่อไว้เช็คสัญญาณ)
+    st.sidebar.caption(f"🎯 ความแม่นยำ GPS: {user_loc['accuracy']:.1f} เมตร")
+else:
+    curr_lat, curr_lon = 13.7563, 100.5018 # ค่า Default
 
 # Sidebar: กรองข้อมูล
 all_data = load_spots()
@@ -91,21 +123,24 @@ with st.sidebar.form("add_spot_form", clear_on_submit=True):
     u_file = st.file_uploader("รูปปลา", type=['jpg','png','jpeg'])
     
     if st.form_submit_button("บันทึกหมายตกปลา"):
-        img_url = ""
-        if u_file:
-            # ย่อขนาดรูปก่อนอัปโหลด
-            image = Image.open(u_file)
-            image.thumbnail((800, 800))
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='JPEG')
+        if curr_lat == 13.7563 and curr_lon == 100.5018:
+            st.error("❌ ยังดึงพิกัดจาก GPS ไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่")
+        else:
+            img_url = ""
+            if u_file:
+                # ย่อขนาดรูปก่อนอัปโหลด
+                image = Image.open(u_file)
+                image.thumbnail((800, 800))
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='JPEG')
             
-            f_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-            supabase.storage.from_("fishing_images").upload(f_name, img_byte_arr.getvalue())
-            img_url = supabase.storage.from_("fishing_images").get_public_url(f_name)
+                f_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                supabase.storage.from_("fishing_images").upload(f_name, img_byte_arr.getvalue())
+                img_url = supabase.storage.from_("fishing_images").get_public_url(f_name)
             
-        supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish, "description":desc, "image_url":img_url}).execute()
-        st.success("บันทึกแล้ว!")
-        st.rerun()
+            supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish, "description":desc, "image_url":img_url}).execute()
+            st.success("บันทึกแล้ว!")
+            st.rerun()
 
 # กรอง Data
 df = all_data.copy()
@@ -115,7 +150,7 @@ if f_img: df = df[df['image_url'] != ""]
 # --- 4. MAP DISPLAY ---
 col1, col2 = st.columns([3, 1])
 with col1:
-    m = folium.Map(location=[curr_lat, curr_lon], zoom_start=12)
+    m = folium.Map(location=[curr_lat, curr_lon], zoom_start=15)
     folium.Marker([curr_lat, curr_lon], popup="คุณอยู่ที่นี่", icon=folium.Icon(color='red')).add_to(m)
 
     for _, row in df.iterrows():
