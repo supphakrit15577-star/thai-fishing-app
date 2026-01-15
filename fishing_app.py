@@ -12,8 +12,8 @@ import io
 
 # --- 1. CONFIGURATION & CONNECTION ---
 # แนะนำให้ใส่ใน Streamlit Secrets เมื่อ Deploy จริง
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "URL_ของ_SUPABASE")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "KEY_ของ_SUPABASE")
+SUPABASE_URL = st.secrets.get("https://ajurexheolscvnkycaqo.supabase.co")
+SUPABASE_KEY = st.secrets.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqdXJleGhlb2xzY3Zua3ljYXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyMDk2OTYsImV4cCI6MjA4Mzc4NTY5Nn0.i6akECleLwulyUDiWHthrEaFj-jYk6lNHuFq9T0n_ts")
 WEATHER_API_KEY = "2e323a6a31b3c5ffae1efed13dad633b"
 
 try:
