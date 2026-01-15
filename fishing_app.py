@@ -57,10 +57,17 @@ def get_weather_info(lat, lon):
     except: return "ไม่มีข้อมูล", ""
 
 # --- 3. UI SETUP ---
-st.set_page_config(page_title="Thai Fishing Pro App", layout="wide")
+st.set_page_config(page_title="Thai Fishing Pro App", layout="wide", initial_sidebar_state="expanded")
 
 # ซ่อน Header/Footer ให้เหมือน App จริง
-st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}</style>""", unsafe_allow_html=True)
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    /* แทนที่จะซ่อน header ทั้งหมด ให้ซ่อนแค่ความสูงบางส่วน หรือข้ามไปก่อน */
+    /* header {visibility: hidden;} */ 
+    </style>
+    """, unsafe_allow_html=True)
 
 st.title("🎣 แผนที่นักตกปลาไทย (Pro)")
 
