@@ -119,16 +119,48 @@ df = all_data.copy()
 if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 if f_img: df = df[df['image_url'] != ""]
 
-if 'map_center' not in st.session_state:
-    st.session_state.map_center = [curr_lat, curr_lon]
-if 'map_zoom' not in st.session_state:
-    st.session_state.map_zoom = 12 #Defalt Zoom
+# สร้าง Fragment เพื่อแยกส่วนการวาดแผนที่ ไม่ให้ Rerun ทั้งหน้าเว็บ
+@st.fragment
+def show_map_fragment():
+    # ใช้พิกัดจาก session_state เพื่อความเสถียร
+    m = folium.Map(
+        location=st.session_state.map_center, 
+        zoom_start=st.session_state.map_zoom,
+        control_scale=True
+    )
 
-if user_loc and 'first_load_done' not in st.session_state:
-    st.session_state.map_center = [curr_lat, curr_lon]
-    st.session_state.first_load_done = True
+    # หมุดตัวเรา (ขยับตาม GPS)
+    folium.Marker(
+        [curr_lat, curr_lon],
+        popup="ตำแหน่งของคุณ",
+        icon=folium.Icon(color='red', icon='user', prefix='fa')
+    ).add_to(m)
 
-m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom,control_scale=True)
+    # หมุดหมายตกปลา
+    for _, row in df.iterrows():
+        weather = get_weather_info(row['lat'], row['lon'])
+        water = get_real_water_level(row['name'])
+        img_html = f'<img src="{row["image_url"]}" width="100%" style="border-radius:10px;">' if row['image_url'] else ""
+        
+        popup_c = f"""
+        <div style='font-family:sans-serif; min-width:200px;'>
+            {img_html}<h4>{row['name']}</h4>
+            <b>🐟 ปลา:</b> {row['fish_type']}<br>
+            <b>🌡️ อากาศ:</b> {weather}<br>
+            <b>💧 น้ำ:</b> {water}<br>
+            <a href="google.navigation:q={row['lat']},{row['lon']}" target="_blank">
+                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 เปิดแผนที่นำทาง</button>
+            </a>
+        </div>
+        """
+        folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_c, max_width=250), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
+
+    # จุดสำคัญ: ไม่ต้องใช้ returned_objects เพื่อลดการส่งข้อมูลกลับมา rerun
+    # และลดการใช้ key เดิมๆ เพื่อป้องกัน Cache ค้าง
+    st_folium(m, width="100%", height=600, key="stable_map")
+
+# เรียกใช้งาน Fragment
+show_map_fragment()
 
 # หมุดตัวเรา (ขยับตาม GPS เสมอ)
 folium.Marker([curr_lat, curr_lon],popup = "ตำแหน่งของคุณ", icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
