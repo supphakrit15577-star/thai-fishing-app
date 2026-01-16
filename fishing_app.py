@@ -105,7 +105,7 @@ with st.sidebar.form("add_form", clear_on_submit=True):
     st.subheader("➕ ปักหมุดหมายใหม่")
     n = st.text_input("ชื่อหมาย")
     fish_type = st.text_input("ปลาที่พบ")
-    u_file = st.file_uploader("ถ่ายรูป", type=['jpg','jpeg','png'])
+    u_files = st.file_uploader("ถ่ายรูป (เลือกได้หลายรูป)", type=['jpg','jpeg','png'], accept_multiple_files=True)
     if st.form_submit_button("บันทึกพิกัดปัจจุบัน"):
         if curr_lat == 13.7563:
             st.error("รอสัญญาณ GPS สักครู่...")
@@ -117,7 +117,8 @@ with st.sidebar.form("add_form", clear_on_submit=True):
                 fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                 supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
                 img_url = supabase.storage.from_("fishing_images").get_public_url(fname)
-            
+
+            img_url_str = ",".join(urls)
             supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish_type, "image_url":img_url}).execute()
             st.success("บันทึกสำเร็จ!")
             st.rerun()
@@ -156,41 +157,9 @@ def render_stable_map(display_df, u_lat, u_lon):
         elif len(images) == 1:
             img_html = f'<img src="{images[0]}" width="100%" style="border-radius:8px;">'
 
-        # CSS สำหรับ Slideshow
-        css_style = """
-        <style>
-        .slideshow-container { position: relative; margin: auto; }
-        .mySlides { display: none; }
-        .prev, .next { cursor: pointer; position: absolute; top: 50%; width: auto; padding: 10px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.6s ease; border-radius: 0 3px 3px 0; user-select: none; background-color: rgba(0,0,0,0.5); }
-        .next { right: 0; border-radius: 3px 0 0 3px; }
-        .fade { animation-name: fade; animation-duration: 1.5s; }
-        @keyframes fade { from {opacity: .4} to {opacity: 1} }
-        </style>
-        """
-
-        # JavaScript สำหรับควบคุมการเลื่อน (ใส่ไว้ใน Popup)
-        js_script = """
-        <script>
-        var slideIndex = 1;
-        function showSlides(n, container) {
-            var i;
-            var slides = container.parentElement.getElementsByClassName("mySlides");
-            if (n > slides.length) {slideIndex = 1}
-            if (n < 1) {slideIndex = slides.length}
-            for (i = 0; i < slides.length; i++) { slides[i].style.display = "none"; }
-            slides[slideIndex-1].style.display = "block";
-        }
-        function plusSlides(n, btn) { showSlides(slideIndex += n, btn); }
-        // เริ่มต้นแสดงภาพแรก
-        setTimeout(function(){ 
-            var containers = document.getElementsByClassName("slideshow-container");
-            for(var j=0; j<containers.length; j++) {
-                var s = containers[j].getElementsByClassName("mySlides");
-                if(s.length > 0) s[0].style.display = "block";
-            }
-        }, 100);
-        </script>
-        """
+        # CSS & JS (ต้องเขียนแบบชิดซ้ายเพื่อไม่ให้ติดช่องว่าง)
+        css = "<style>.slideshow-container{position:relative;}.mySlides{display:none;}.prev,.next{cursor:pointer;position:absolute;top:50%;width:auto;padding:10px;margin-top:-22px;color:white;font-weight:bold;font-size:18px;background:rgba(0,0,0,0.5);border-radius:3px;}.next{right:0;}.fade{animation:fade 1.5s;}@keyframes fade{from{opacity:.4}to{opacity:1}}</style>"
+        js = '<script>var slideIndex=1; function plusSlides(n,el){showSlides(slideIndex+=n,el.parentElement);} function showSlides(n,container){var i; var slides=container.getElementsByClassName("mySlides"); if(n>slides.length){slideIndex=1} if(n<1){slideIndex=slides.length} for(i=0;i<slides.length;i++){slides[i].style.display="none";} slides[slideIndex-1].style.display="block";} setTimeout(function(){var conts=document.getElementsByClassName("slideshow-container"); for(var j=0;j<conts.length;j++){var s=conts[j].getElementsByClassName("mySlides"); if(s.length>0)s[0].style.display="block";}},100);</script>'
         
         popup_content = f"""
 {css_style}
