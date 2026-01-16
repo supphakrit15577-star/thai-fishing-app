@@ -16,7 +16,7 @@ st.markdown("""
     <style>
     /* ขยายพื้นที่หลักให้กว้างสุดขอบ */
     .main .block-container {
-        padding-top: 1rem !important;
+        padding-top: 0rem !important;
         padding-bottom: 0rem !important;
         padding-left: 0rem !important;
         padding-right: 0rem !important;
