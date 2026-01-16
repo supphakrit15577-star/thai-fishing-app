@@ -193,22 +193,21 @@ def render_stable_map(display_df, u_lat, u_lon):
         """
         
         popup_content = f"""
-        {css_style}
-        <div style='font-family:sans-serif; min-width:220px;'>
-            {img_html}
-            <h4 style='margin:5px 0;'>{row['name']}</h4>
-            <b>🐟 ปลา:</b> {row['fish_type']}<br>
-            <b>🌡️ ตอนนี้:</b> {weather_now}<br>
-            <b>💧 น้ำ:</b> {water}
-            {weather_fore}
-            <a href="http://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 นำทาง</button>
-            </a>
-            {js_script if len(images) > 1 else ""}
-        </div>
-        """
-
-       
+{css_style}
+<div style='font-family:sans-serif; min-width:220px;'>
+{img_html}
+<h4 style='margin:5px 0;'>{row['name']}</h4>
+<b>🐟 ปลา:</b> {row['fish_type']}<br>
+<b>🌡️ ตอนนี้:</b> {weather_now}<br>
+<b>💧 น้ำ:</b> {water}
+{weather_fore}
+<a href="http://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
+<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 นำทาง</button>
+</a>
+{js_script if len(images) > 1 else ""}
+</div>
+"""
+        
         folium.Marker(
             [row['lat'], row['lon']], 
             popup=folium.Popup(popup_content, max_width=300), 
