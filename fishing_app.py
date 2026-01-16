@@ -60,7 +60,6 @@ def get_weather_info(lat, lon):
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="Thai Fishing Pro App", layout="wide", initial_sidebar_state="expanded")
 
-# ซ่อน Header/Footer ให้เหมือน App จริง
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -100,19 +99,27 @@ user_loc = streamlit_js_eval(
     key='watch_location'
 )
 
-if user_loc:
-    curr_lat = user_loc['latitude']
-    curr_lon = user_loc['longitude']
-    # แสดงความแม่นยำใน Sidebar (เผื่อไว้เช็คสัญญาณ)
-    st.sidebar.caption(f"🎯 ความแม่นยำ GPS: {user_loc['accuracy']:.1f} เมตร")
-else:
-    curr_lat, curr_lon = 13.7563, 100.5018 # ค่า Default
+curr_lat, curr_lon = (user_loc['latitude'], user_loc['longitude']) if user_loc else (13.7563, 100.5018)
+st.sidebar.caption(f"🎯 ความแม่นยำ GPS: {user_loc['accuracy']:.1f} เมตร")
 
+#Position Check
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [curr_lat, curr_lon]
+
+if user_loc and 'first_load' not in st.session_state:
+    st.session_state.map_center = [curr_lat, curr_lon]
+    st.session_state.first_load = True
+    
 # Sidebar: กรองข้อมูล
 all_data = load_spots()
 st.sidebar.header("🔍 คัดกรอง")
 f_fish = st.sidebar.multiselect("เลือกปลา", list(set(",".join(all_data['fish_type'].astype(str)).split(","))))
 f_img = st.sidebar.checkbox("มีรูปเท่านั้น")
+
+if st.sidebar.button("📍 กลับมาที่ตำแหน่งปัจจุบัน"):
+    st.session_state.map_center = [curr_lat, curr_lon]
+    st.rerun()
+
 
 # Sidebar: เพิ่มจุดใหม่
 st.sidebar.divider()
@@ -151,7 +158,7 @@ if f_img: df = df[df['image_url'] != ""]
 # --- 4. MAP DISPLAY ---
 col1, col2 = st.columns([3, 1])
 with col1:
-    m = folium.Map(location=[curr_lat, curr_lon], zoom_start=15)
+    m = folium.Map(location=st.session_state.map_center, zoom_start=12)
     folium.Marker([curr_lat, curr_lon], popup="คุณอยู่ที่นี่", icon=folium.Icon(color='red')).add_to(m)
 
     for _, row in df.iterrows():
@@ -178,7 +185,14 @@ with col1:
         """
         folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_html, max_width=250), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
-    st_folium(m, width=900, height=600, key="main_map")
+    map_data = st_folium(m, width=900, height=600, key="main_map")
+    
+    #Movement checking
+    if map_data and map_data.get('center'):
+        new_lat = map_data['center']['lat']
+        new_lng = map_data['center']['lng']
+        # บันทึกค่าไว้เพื่อที่ Rerun ครั้งหน้า แผนที่จะยังอยู่ที่เดิม
+        st.session_state.map_center = [new_lat, new_lng]
 
 with col2:
     st.subheader("📋 รายการหมาย")
