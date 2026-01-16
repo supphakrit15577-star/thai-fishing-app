@@ -38,18 +38,34 @@ def get_real_water_level(dam_name):
         return "ไม่พบข้อมูล"
     except: return "เชื่อมต่อไม่ได้"
 
-def get_weather_info(lat, lon):
+def get_weather_forecast(lat, lon):
+    """ดึงพยากรณ์อากาศล่วงหน้า 3 วัน"""
     try:
+        # อากาศปัจจุบัน
         curr_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
         c = requests.get(curr_url).json()
-        return f"{c['main']['temp']}°C, {c['weather'][0]['description']}"
-    except: return "ไม่มีข้อมูล"
+        curr_txt = f"{c['main']['temp']}°C, {c['weather'][0]['description']}"
+
+        # พยากรณ์ล่วงหน้า
+        fore_url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
+        f = requests.get(fore_url).json()
+        
+        fore_html = "<hr style='margin:5px 0;'><small><b>📅 พยากรณ์ 3 วัน:</b><br>"
+        # เลือกข้อมูลทุกๆ 24 ชม. (ดึง index 8, 16, 24 จาก list ที่ส่งมาทุก 3 ชม.)
+        for i in [8, 16, 24]:
+            day = f['list'][i]
+            dt = datetime.fromtimestamp(day['dt']).strftime('%d/%m')
+            fore_html += f"• {dt}: {day['main']['temp']:.0f}°C, {day['weather'][0]['description']}<br>"
+        fore_html += "</small>"
+        
+        return curr_txt, fore_html
+    except: 
+        return "ไม่มีข้อมูล", ""
 
 # --- 3. UI & GPS SETUP ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>footer {visibility: hidden;} .stApp header {z-index: 1;}</style>""", unsafe_allow_html=True)
 
-# ดึงพิกัด GPS
 user_loc = streamlit_js_eval(
     js_expressions="""
     new Promise((resolve, reject) => {
@@ -59,18 +75,17 @@ user_loc = streamlit_js_eval(
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
     })
-    """, key='gps_track_v3'
+    """, key='gps_track_final'
 )
 
 curr_lat, curr_lon = (user_loc['lat'], user_loc['lon']) if user_loc else (13.7563, 100.5018)
 
-# ระบบควบคุม Camera แผนที่
 if 'map_center' not in st.session_state:
     st.session_state.map_center = [curr_lat, curr_lon]
 if 'map_zoom' not in st.session_state:
     st.session_state.map_zoom = 12
 
-# --- 4. SIDEBAR (ฟังก์ชันการใช้งานทั้งหมด) ---
+# --- 4. SIDEBAR ---
 st.sidebar.title("🎣 Fishing Pro")
 if user_loc:
     st.sidebar.caption(f"🎯 GPS แม่นยำ: {user_loc['acc']:.1f} ม.")
@@ -107,34 +122,35 @@ with st.sidebar.form("add_form", clear_on_submit=True):
             st.success("บันทึกสำเร็จ!")
             st.rerun()
 
-# --- 5. MAP DISPLAY (แก้ไขการกระพริบด้วย Fragment) ---
+# --- 5. MAP DISPLAY ---
 df = all_data.copy()
 if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 if f_img: df = df[df['image_url'] != ""]
 
+# ส่วนหัวข้อใหม่ข้างบนแผนที่
+st.subheader("🗺️ แผนที่พิกัดหมายตกปลาทั่วไทย")
+st.info(f"ตำแหน่งปัจจุบันของคุณ: {curr_lat:.4f}, {curr_lon:.4f} (อัปเดตแบบ Real-time)")
+
 @st.fragment
 def render_stable_map(display_df, u_lat, u_lon):
-    # สร้างแผนที่โดยใช้ค่าจาก Session State เพื่อให้นิ่ง
     m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-    
-    # หมุดตัวเรา
     folium.Marker([u_lat, u_lon], icon=folium.Icon(color='red', icon='user', prefix='fa'), popup="คุณอยู่ที่นี่").add_to(m)
 
-    # หมุดหมายตกปลาพร้อมข้อมูลครบถ้วน
     for _, row in display_df.iterrows():
-        weather = get_weather_info(row['lat'], row['lon'])
+        weather_now, weather_fore = get_weather_forecast(row['lat'], row['lon'])
         water = get_real_water_level(row['name'])
         img_html = f'<img src="{row["image_url"]}" width="100%" style="border-radius:8px;">' if row['image_url'] else ""
         
         popup_content = f"""
-        <div style='font-family:sans-serif; min-width:200px;'>
+        <div style='font-family:sans-serif; min-width:220px;'>
             {img_html}
             <h4 style='margin:5px 0;'>{row['name']}</h4>
             <b>🐟 ปลา:</b> {row['fish_type']}<br>
-            <b>🌡️ อากาศ:</b> {weather}<br>
-            <b>💧 น้ำ:</b> {water}<br>
-            <a href="https://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer;'>🚀 นำทางด้วย Google Maps</button>
+            <b>🌡️ ตอนนี้:</b> {weather_now}<br>
+            <b>💧 น้ำ:</b> {water}
+            {weather_fore}
+            <a href="http://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
+                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer;'>🚀 นำทาง Google Maps</button>
             </a>
         </div>
         """
@@ -144,10 +160,8 @@ def render_stable_map(display_df, u_lat, u_lon):
             icon=folium.Icon(color='green', icon='fish', prefix='fa')
         ).add_to(m)
 
-    # แสดงแผนที่โดยไม่ส่งค่า center กลับมาเพื่อหยุดการ Rerun วนลูป
-    st_folium(m, width="100%", height=600, key="fishing_map_final")
+    st_folium(m, width="100%", height=600, key="fishing_map_stable_v4")
 
-# เรียกใช้งานแผนที่
 render_stable_map(df, curr_lat, curr_lon)
 
 st.subheader("📋 รายการหมายทั้งหมด")
