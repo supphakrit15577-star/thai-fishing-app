@@ -39,28 +39,21 @@ def get_real_water_level(dam_name):
     except: return "เชื่อมต่อไม่ได้"
 
 def get_weather_forecast(lat, lon):
-    """ดึงพยากรณ์อากาศล่วงหน้า 3 วัน"""
     try:
-        # อากาศปัจจุบัน
         curr_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
         c = requests.get(curr_url).json()
         curr_txt = f"{c['main']['temp']}°C, {c['weather'][0]['description']}"
 
-        # พยากรณ์ล่วงหน้า
         fore_url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
         f = requests.get(fore_url).json()
-        
         fore_html = "<hr style='margin:5px 0;'><small><b>📅 พยากรณ์ 3 วัน:</b><br>"
-        # เลือกข้อมูลทุกๆ 24 ชม. (ดึง index 8, 16, 24 จาก list ที่ส่งมาทุก 3 ชม.)
         for i in [8, 16, 24]:
             day = f['list'][i]
             dt = datetime.fromtimestamp(day['dt']).strftime('%d/%m')
             fore_html += f"• {dt}: {day['main']['temp']:.0f}°C, {day['weather'][0]['description']}<br>"
         fore_html += "</small>"
-        
         return curr_txt, fore_html
-    except: 
-        return "ไม่มีข้อมูล", ""
+    except: return "ไม่มีข้อมูล", ""
 
 # --- 3. UI & GPS SETUP ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide", initial_sidebar_state="expanded")
@@ -75,7 +68,7 @@ user_loc = streamlit_js_eval(
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
     })
-    """, key='gps_track_final'
+    """, key='gps_track_v6'
 )
 
 curr_lat, curr_lon = (user_loc['lat'], user_loc['lon']) if user_loc else (13.7563, 100.5018)
@@ -87,9 +80,6 @@ if 'map_zoom' not in st.session_state:
 
 # --- 4. SIDEBAR ---
 st.sidebar.title("🎣 Fishing Pro")
-if user_loc:
-    st.sidebar.caption(f"🎯 GPS แม่นยำ: {user_loc['acc']:.1f} ม.")
-
 if st.sidebar.button("📍 ย้ายกล้องไปที่ตำแหน่งฉัน"):
     st.session_state.map_center = [curr_lat, curr_lon]
     st.session_state.map_zoom = 15
@@ -110,17 +100,17 @@ with st.sidebar.form("add_form", clear_on_submit=True):
         if curr_lat == 13.7563:
             st.error("รอสัญญาณ GPS สักครู่...")
         else:
-            img_url = ""
-            if u_file:
+            urls = []
+            for u_file in u_files:
                 img = Image.open(u_file); img.thumbnail((800, 800))
                 buf = io.BytesIO(); img.save(buf, format='JPEG')
-                fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{u_file.name}"
                 supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
-                img_url = supabase.storage.from_("fishing_images").get_public_url(fname)
-
+                urls.append(supabase.storage.from_("fishing_images").get_public_url(fname))
+            
             img_url_str = ",".join(urls)
-            supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish_type, "image_url":img_url}).execute()
-            st.success("บันทึกสำเร็จ!")
+            supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish_type, "image_url":img_url_str}).execute()
+            st.success(f"บันทึกสำเร็จ {len(urls)} รูป!")
             st.rerun()
 
 # --- 5. MAP DISPLAY ---
@@ -128,9 +118,8 @@ df = all_data.copy()
 if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 if f_img: df = df[df['image_url'] != ""]
 
-# ส่วนหัวข้อใหม่ข้างบนแผนที่
 st.subheader("🗺️ แผนที่พิกัดหมายตกปลาทั่วไทย")
-st.info(f"ตำแหน่งปัจจุบันของคุณ: {curr_lat:.4f}, {curr_lon:.4f} (อัปเดตแบบ Real-time)")
+st.info(f"ตำแหน่งปัจจุบัน: {curr_lat:.4f}, {curr_lon:.4f}")
 
 @st.fragment
 def render_stable_map(display_df, u_lat, u_lon):
@@ -140,50 +129,37 @@ def render_stable_map(display_df, u_lat, u_lon):
     for _, row in display_df.iterrows():
         weather_now, weather_fore = get_weather_forecast(row['lat'], row['lon'])
         water = get_real_water_level(row['name'])
-
+        
+        # จัดการรูปภาพ (รองรับหลายรูป)
         images = str(row["image_url"]).split(",") if row["image_url"] else []
         img_html = ""
-
         if len(images) > 1:
-            # สร้าง HTML Slideshow แบบง่าย
-            slides = "".join([f'<div class="mySlides fade"><img src="{url.strip()}" style="width:100%; border-radius:8px;"></div>' for url in images])
-            img_html = f"""
-            <div class="slideshow-container">
-                {slides}
-                <a class="prev" onclick="plusSlides(-1, this)">&#10094;</a>
-                <a class="next" onclick="plusSlides(1, this)">&#10095;</a>
-            </div>
-            """
+            slides = "".join([f'<div class="mySlides fade"><img src="{u.strip()}" style="width:100%; border-radius:8px; display:block;"></div>' for u in images])
+            img_html = f'<div class="slideshow-container">{slides}<a class="prev" onclick="plusSlides(-1, this)">❮</a><a class="next" onclick="plusSlides(1, this)">❯</a></div>'
         elif len(images) == 1:
-            img_html = f'<img src="{images[0]}" width="100%" style="border-radius:8px;">'
+            img_html = f'<img src="{images[0].strip()}" width="100%" style="border-radius:8px;">'
 
         # CSS & JS (ต้องเขียนแบบชิดซ้ายเพื่อไม่ให้ติดช่องว่าง)
         css = "<style>.slideshow-container{position:relative;}.mySlides{display:none;}.prev,.next{cursor:pointer;position:absolute;top:50%;width:auto;padding:10px;margin-top:-22px;color:white;font-weight:bold;font-size:18px;background:rgba(0,0,0,0.5);border-radius:3px;}.next{right:0;}.fade{animation:fade 1.5s;}@keyframes fade{from{opacity:.4}to{opacity:1}}</style>"
         js = '<script>var slideIndex=1; function plusSlides(n,el){showSlides(slideIndex+=n,el.parentElement);} function showSlides(n,container){var i; var slides=container.getElementsByClassName("mySlides"); if(n>slides.length){slideIndex=1} if(n<1){slideIndex=slides.length} for(i=0;i<slides.length;i++){slides[i].style.display="none";} slides[slideIndex-1].style.display="block";} setTimeout(function(){var conts=document.getElementsByClassName("slideshow-container"); for(var j=0;j<conts.length;j++){var s=conts[j].getElementsByClassName("mySlides"); if(s.length>0)s[0].style.display="block";}},100);</script>'
         
-        popup_content = f"""
-{css_style}
+        popup_html = f"""
+{css}
 <div style='font-family:sans-serif; min-width:220px;'>
 {img_html}
 <h4 style='margin:5px 0;'>{row['name']}</h4>
 <b>🐟 ปลา:</b> {row['fish_type']}<br>
 <b>🌡️ ตอนนี้:</b> {weather_now}<br>
-<b>💧 น้ำ:</b> {water}
-{weather_fore}
-<a href="http://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 นำทาง</button>
+<b>💧 น้ำ:</b> {water}{weather_fore}
+<a href="https://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
+<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer;'>🚀 นำทาง</button>
 </a>
-{js_script if len(images) > 1 else ""}
+{js if len(images) > 1 else ""}
 </div>
 """
-        
-        folium.Marker(
-            [row['lat'], row['lon']], 
-            popup=folium.Popup(popup_content, max_width=300), 
-            icon=folium.Icon(color='green', icon='fish', prefix='fa')
-        ).add_to(m)
+        folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_html, max_width=300), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
-    st_folium(m, width="100%", height=600, key="fishing_map_stable_v5")
+    st_folium(m, width="100%", height=600, key="stable_map_v6")
 
 render_stable_map(df, curr_lat, curr_lon)
 
