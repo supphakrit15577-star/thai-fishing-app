@@ -14,6 +14,13 @@ st.set_page_config(page_title="Thai Fishing Pro", layout="wide")
 
 st.markdown("""
     <style>
+    /* 1. ล็อคหน้าจอหลักไม่ให้สไลด์ขึ้นลง */
+    html, body, [data-testid="stAppViewContainer"] {
+        overflow: hidden;
+        height: 100vh;
+        max-height: 100vh;
+    }
+
     /* ขยายพื้นที่หลักให้กว้างสุดขอบ */
     .main .block-container {
         padding-top: 0rem !important;
@@ -21,7 +28,9 @@ st.markdown("""
         padding-left: 0rem !important;
         padding-right: 0rem !important;
         max-height: 100vh !important;
+        overflow: hidden;
     }
+    
     /* ซ่อน Footer */
     footer {visibility: hidden;}
     </style>
@@ -160,6 +169,6 @@ def render_map(df):
         ).add_to(m)
 
     # แสดงผลแผนที่กว้างเต็มจอ (Height ปรับตามความเหมาะสมของอุปกรณ์)
-    st_folium(m, width="100%", height=550, returned_objects=[], key="stable_sidebar_map")
+    st_folium(m, width="100%", height="80%", returned_objects=[], key="stable_sidebar_map")
 
 render_map(df)
