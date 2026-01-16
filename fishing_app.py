@@ -53,7 +53,7 @@ def get_weather_forecast(lat, lon):
         return now_txt, fore_html
     except: return "ไม่มีข้อมูล", ""
 
-# --- 3. SESSION STATE FOR MAP (หัวใจของการแก้แมพเด้ง) ---
+# --- 3. SESSION STATE ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide")
 
 if 'map_center' not in st.session_state:
@@ -63,8 +63,8 @@ if 'map_zoom' not in st.session_state:
 if 'user_pos' not in st.session_state:
     st.session_state.user_pos = [13.7563, 100.5018]
 
-# ดึง GPS แบบทำงานเบื้องหลัง
-loc = streamlit_js_eval(js_expressions="new Promise(r => navigator.geolocation.getCurrentPosition(p => r(p.coords)))", key='gps_val')
+# ดึง GPS แบบทำงานเบื้องหลัง ลดการเรียกใช้ซ้ำ
+loc = streamlit_js_eval(js_expressions="new Promise(r => navigator.geolocation.getCurrentPosition(p => r(p.coords)))", key='gps_val_stable')
 if loc:
     st.session_state.user_pos = [loc['latitude'], loc['longitude']]
 
@@ -102,17 +102,16 @@ with st.sidebar.form("add_form", clear_on_submit=True):
         st.success("บันทึกเรียบร้อย!")
         st.rerun()
 
-# --- 5. MAIN MAP ---
+# --- 5. STABLE MAP SECTION (ใช้ @st.fragment เพื่อลดการกระพริบ) ---
 st.subheader("🗺️ แผนที่พิกัดหมายตกปลา")
 
-# ฟังก์ชันจัดการการวาดแผนที่
-def render_map(df):
+@st.fragment
+def render_stable_map(df):
     m = folium.Map(
         location=st.session_state.map_center, 
         zoom_start=st.session_state.map_zoom
     )
     
-    # หมุดปัจจุบัน
     folium.Marker(st.session_state.user_pos, 
                   icon=folium.Icon(color='red', icon='user', prefix='fa'), 
                   popup="คุณอยู่ที่นี่").add_to(m)
@@ -146,12 +145,18 @@ def render_map(df):
                       popup=folium.Popup(popup_content, max_width=250), 
                       icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
-    # ส่วนสำคัญ: รับค่ากลับจากแผนที่เพื่อจำพิกัดล่าสุดที่ผู้ใช้ซูมหรือเลื่อน
-    map_data = st_folium(m, width="100%", height=550, key="fishing_map_v9")
+    # แสดงแผนที่แบบจำกัดการส่งค่ากลับ
+    map_data = st_folium(
+        m, 
+        width="100%", 
+        height=550, 
+        key="fishing_map_stable_v10",
+        returned_objects=["center", "zoom"]
+    )
     
+    # อัปเดตพิกัดเฉพาะใน Session เพื่อป้องกันการเด้งเวลาส่วนอื่นของแอปทำงาน
     if map_data and map_data['center']:
-        # อัปเดตพิกัดและซูมปัจจุบันลงใน Session เพื่อไม่ให้เด้งตอน Rerun
         st.session_state.map_center = [map_data['center']['lat'], map_data['center']['lng']]
         st.session_state.map_zoom = map_data['zoom']
 
-render_map(all_data)
+render_stable_map(all_data)
