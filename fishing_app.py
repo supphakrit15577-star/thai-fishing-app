@@ -68,7 +68,7 @@ user_loc = streamlit_js_eval(
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
     })
-    """, key='gps_track_v6'
+    """, key='gps_track_v7'
 )
 
 curr_lat, curr_lon = (user_loc['lat'], user_loc['lon']) if user_loc else (13.7563, 100.5018)
@@ -106,7 +106,9 @@ with st.sidebar.form("add_form", clear_on_submit=True):
                 buf = io.BytesIO(); img.save(buf, format='JPEG')
                 fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{u_file.name}"
                 supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
-                urls.append(supabase.storage.from_("fishing_images").get_public_url(fname))
+                # บังคับใช้ HTTPS ลิงก์
+                public_url = supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://")
+                urls.append(public_url)
             
             img_url_str = ",".join(urls)
             supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish_type, "image_url":img_url_str}).execute()
@@ -119,7 +121,6 @@ if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fi
 if f_img: df = df[df['image_url'] != ""]
 
 st.subheader("🗺️ แผนที่พิกัดหมายตกปลาทั่วไทย")
-st.info(f"ตำแหน่งปัจจุบัน: {curr_lat:.4f}, {curr_lon:.4f}")
 
 @st.fragment
 def render_stable_map(display_df, u_lat, u_lon):
@@ -130,36 +131,41 @@ def render_stable_map(display_df, u_lat, u_lon):
         weather_now, weather_fore = get_weather_forecast(row['lat'], row['lon'])
         water = get_real_water_level(row['name'])
         
-        # จัดการรูปภาพ (รองรับหลายรูป)
-        images = str(row["image_url"]).split(",") if row["image_url"] else []
+        # จัดการรูปภาพ (ล้างช่องว่างและบังคับ https)
+        images = [u.strip().replace("http://", "https://") for u in str(row["image_url"]).split(",")] if row["image_url"] else []
         img_html = ""
+        
         if len(images) > 1:
-            slides = "".join([f'<div class="mySlides fade"><img src="{u.strip()}" style="width:100%; border-radius:8px; display:block;"></div>' for u in images])
+            slides = "".join([f'<div class="mySlides fade"><img src="{u}" style="width:100%; border-radius:8px; display:block; min-height:150px; background:#eee;"></div>' for u in images])
             img_html = f'<div class="slideshow-container">{slides}<a class="prev" onclick="plusSlides(-1, this)">❮</a><a class="next" onclick="plusSlides(1, this)">❯</a></div>'
         elif len(images) == 1:
-            img_html = f'<img src="{images[0].strip()}" width="100%" style="border-radius:8px;">'
+            img_html = f'<img src="{images[0]}" width="100%" style="border-radius:8px; display:block; min-height:150px; background:#eee;">'
 
-        # CSS & JS (ต้องเขียนแบบชิดซ้ายเพื่อไม่ให้ติดช่องว่าง)
-        css = "<style>.slideshow-container{position:relative;}.mySlides{display:none;}.prev,.next{cursor:pointer;position:absolute;top:50%;width:auto;padding:10px;margin-top:-22px;color:white;font-weight:bold;font-size:18px;background:rgba(0,0,0,0.5);border-radius:3px;}.next{right:0;}.fade{animation:fade 1.5s;}@keyframes fade{from{opacity:.4}to{opacity:1}}</style>"
-        js = '<script>var slideIndex=1; function plusSlides(n,el){showSlides(slideIndex+=n,el.parentElement);} function showSlides(n,container){var i; var slides=container.getElementsByClassName("mySlides"); if(n>slides.length){slideIndex=1} if(n<1){slideIndex=slides.length} for(i=0;i<slides.length;i++){slides[i].style.display="none";} slides[slideIndex-1].style.display="block";} setTimeout(function(){var conts=document.getElementsByClassName("slideshow-container"); for(var j=0;j<conts.length;j++){var s=conts[j].getElementsByClassName("mySlides"); if(s.length>0)s[0].style.display="block";}},100);</script>'
+        # CSS & JS สำหรับ Popup
+        css = "<style>.slideshow-container{position:relative;width:100%;}.mySlides{display:none;}.prev,.next{cursor:pointer;position:absolute;top:50%;width:auto;padding:8px;margin-top:-22px;color:white;font-weight:bold;background:rgba(0,0,0,0.5);border-radius:3px;z-index:10;}.next{right:0;}.fade{animation:fade 1s;}@keyframes fade{from{opacity:.4}to{opacity:1}}</style>"
+        js = '<script>var slideIndex=1; function plusSlides(n,el){showSlides(slideIndex+=n,el.parentElement);} function showSlides(n,container){var i; var slides=container.getElementsByClassName("mySlides"); if(n>slides.length){slideIndex=1} if(n<1){slideIndex=slides.length} for(i=0;i<slides.length;i++){slides[i].style.display="none";} slides[slideIndex-1].style.display="block";} setTimeout(function(){var conts=document.getElementsByClassName("slideshow-container"); for(var j=0;j<conts.length;j++){var s=conts[j].getElementsByClassName("mySlides"); if(s.length>0)s[0].style.display="block";}},300);</script>'
         
         popup_html = f"""
 {css}
-<div style='font-family:sans-serif; min-width:220px;'>
+<div style='font-family:sans-serif; width:220px;'>
 {img_html}
-<h4 style='margin:5px 0;'>{row['name']}</h4>
+<h4 style='margin:8px 0 4px 0;'>{row['name']}</h4>
 <b>🐟 ปลา:</b> {row['fish_type']}<br>
-<b>🌡️ ตอนนี้:</b> {weather_now}<br>
+<b>🌡️ อากาศ:</b> {weather_now}<br>
 <b>💧 น้ำ:</b> {water}{weather_fore}
 <a href="https://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer;'>🚀 นำทาง</button>
+<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer; font-weight:bold;'>🚀 นำทาง</button>
 </a>
 {js if len(images) > 1 else ""}
 </div>
 """
-        folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_html, max_width=300), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
+        folium.Marker(
+            [row['lat'], row['lon']], 
+            popup=folium.Popup(popup_html, max_width=300), 
+            icon=folium.Icon(color='green', icon='fish', prefix='fa')
+        ).add_to(m)
 
-    st_folium(m, width="100%", height=600, key="stable_map_v6")
+    st_folium(m, width="100%", height=600, key="stable_map_v7")
 
 render_stable_map(df, curr_lat, curr_lon)
 
