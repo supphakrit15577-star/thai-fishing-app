@@ -160,6 +160,6 @@ def render_map(df):
         ).add_to(m)
 
     # แสดงผลแผนที่กว้างเต็มจอ (Height ปรับตามความเหมาะสมของอุปกรณ์)
-    st_folium(m, width="100%", height=600, returned_objects=[], key="stable_sidebar_map")
+    st_folium(m, width="100%", height=550, returned_objects=[], key="stable_sidebar_map")
 
 render_map(df)
