@@ -139,9 +139,61 @@ def render_stable_map(display_df, u_lat, u_lon):
     for _, row in display_df.iterrows():
         weather_now, weather_fore = get_weather_forecast(row['lat'], row['lon'])
         water = get_real_water_level(row['name'])
-        img_html = f'<img src="{row["image_url"]}" width="100%" style="border-radius:8px;">' if row['image_url'] else ""
+
+        images = str(row["image_url"]).split(",") if row["image_url"] else []
+        img_html = ""
+
+        if len(images) > 1:
+            # สร้าง HTML Slideshow แบบง่าย
+            slides = "".join([f'<div class="mySlides fade"><img src="{url.strip()}" style="width:100%; border-radius:8px;"></div>' for url in images])
+            img_html = f"""
+            <div class="slideshow-container">
+                {slides}
+                <a class="prev" onclick="plusSlides(-1, this)">&#10094;</a>
+                <a class="next" onclick="plusSlides(1, this)">&#10095;</a>
+            </div>
+            """
+        elif len(images) == 1:
+            img_html = f'<img src="{images[0]}" width="100%" style="border-radius:8px;">'
+
+        # CSS สำหรับ Slideshow
+        css_style = """
+        <style>
+        .slideshow-container { position: relative; margin: auto; }
+        .mySlides { display: none; }
+        .prev, .next { cursor: pointer; position: absolute; top: 50%; width: auto; padding: 10px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.6s ease; border-radius: 0 3px 3px 0; user-select: none; background-color: rgba(0,0,0,0.5); }
+        .next { right: 0; border-radius: 3px 0 0 3px; }
+        .fade { animation-name: fade; animation-duration: 1.5s; }
+        @keyframes fade { from {opacity: .4} to {opacity: 1} }
+        </style>
+        """
+
+        # JavaScript สำหรับควบคุมการเลื่อน (ใส่ไว้ใน Popup)
+        js_script = """
+        <script>
+        var slideIndex = 1;
+        function showSlides(n, container) {
+            var i;
+            var slides = container.parentElement.getElementsByClassName("mySlides");
+            if (n > slides.length) {slideIndex = 1}
+            if (n < 1) {slideIndex = slides.length}
+            for (i = 0; i < slides.length; i++) { slides[i].style.display = "none"; }
+            slides[slideIndex-1].style.display = "block";
+        }
+        function plusSlides(n, btn) { showSlides(slideIndex += n, btn); }
+        // เริ่มต้นแสดงภาพแรก
+        setTimeout(function(){ 
+            var containers = document.getElementsByClassName("slideshow-container");
+            for(var j=0; j<containers.length; j++) {
+                var s = containers[j].getElementsByClassName("mySlides");
+                if(s.length > 0) s[0].style.display = "block";
+            }
+        }, 100);
+        </script>
+        """
         
-        popup_content = f"""
+       popup_content = f"""
+        {css_style}
         <div style='font-family:sans-serif; min-width:220px;'>
             {img_html}
             <h4 style='margin:5px 0;'>{row['name']}</h4>
@@ -150,17 +202,20 @@ def render_stable_map(display_df, u_lat, u_lon):
             <b>💧 น้ำ:</b> {water}
             {weather_fore}
             <a href="http://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer;'>🚀 นำทาง Google Maps</button>
+                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 นำทาง</button>
             </a>
+            {js_script if len(images) > 1 else ""}
         </div>
         """
+
+       
         folium.Marker(
             [row['lat'], row['lon']], 
-            popup=folium.Popup(popup_content, max_width=250), 
+            popup=folium.Popup(popup_content, max_width=300), 
             icon=folium.Icon(color='green', icon='fish', prefix='fa')
         ).add_to(m)
 
-    st_folium(m, width="100%", height=600, key="fishing_map_stable_v4")
+    st_folium(m, width="100%", height=600, key="fishing_map_stable_v5")
 
 render_stable_map(df, curr_lat, curr_lon)
 
