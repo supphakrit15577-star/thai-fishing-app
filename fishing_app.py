@@ -159,7 +159,7 @@ map_output = st_folium(m, width="100%", height=600, key="fishing_map", returned_
 if map_output:
         # ถ้าผู้ใช้เลื่อนแผนที่ ให้จำตำแหน่งกึ่งกลางใหม่
         if map_output.get('center'):
-            st.session_state.map_center = [map_data['center']['lat'], map_data['center']['lng']]
+            st.session_state.map_center = [map_output['center']['lat'], map_output['center']['lng']]
         # ถ้าผู้ใช้ซูมเข้า/ออก ให้จำค่าซูมล่าสุดไว้ ไม่ให้มันดีดกลับ
         if map_output.get('zoom'):
-            st.session_state.map_zoom = map_data['zoom']
+            st.session_state.map_zoom = map_output['zoom']
