@@ -43,7 +43,6 @@ def get_weather_forecast(lat, lon):
         curr_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
         c = requests.get(curr_url).json()
         curr_txt = f"{c['main']['temp']}°C, {c['weather'][0]['description']}"
-
         fore_url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=th"
         f = requests.get(fore_url).json()
         fore_html = "<hr style='margin:5px 0;'><small><b>📅 พยากรณ์ 3 วัน:</b><br>"
@@ -55,119 +54,103 @@ def get_weather_forecast(lat, lon):
         return curr_txt, fore_html
     except: return "ไม่มีข้อมูล", ""
 
-# --- 3. UI & GPS SETUP ---
-st.set_page_config(page_title="Thai Fishing Pro", layout="wide", initial_sidebar_state="expanded")
-st.markdown("""<style>footer {visibility: hidden;} .stApp header {z-index: 1;}</style>""", unsafe_allow_html=True)
+# --- 3. UI SETUP ---
+st.set_page_config(page_title="Thai Fishing Pro", layout="wide")
+st.markdown("<style>footer {visibility: hidden;}</style>", unsafe_allow_html=True)
+
+# ดึง GPS (ตั้งค่าให้ดึงแค่ครั้งแรกหรือเมื่อกดปุ่ม เพื่อป้องกันแผนที่เด้ง)
+if 'user_lat' not in st.session_state:
+    st.session_state.user_lat = 13.7563
+    st.session_state.user_lon = 100.5018
 
 user_loc = streamlit_js_eval(
-    js_expressions="""
-    new Promise((resolve, reject) => {
-        navigator.geolocation.watchPosition(
-            (pos) => { resolve({lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy}); },
-            (err) => { reject(err); },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-    })
-    """, key='gps_track_v7'
-)
-
-curr_lat, curr_lon = (user_loc['lat'], user_loc['lon']) if user_loc else (13.7563, 100.5018)
-
-if 'map_center' not in st.session_state:
-    st.session_state.map_center = [curr_lat, curr_lon]
-if 'map_zoom' not in st.session_state:
-    st.session_state.map_zoom = 12
+    js_expressions="navigator.geolocation.getCurrentPosition(p => console.log(p), e => console.log(e));", 
+    key='gps_once'
+) # ใช้เพื่อให้ Browser ขอสิทธิ์ GPS
 
 # --- 4. SIDEBAR ---
 st.sidebar.title("🎣 Fishing Pro")
-if st.sidebar.button("📍 ย้ายกล้องไปที่ตำแหน่งฉัน"):
-    st.session_state.map_center = [curr_lat, curr_lon]
-    st.session_state.map_zoom = 15
-    st.rerun()
+if st.sidebar.button("🎯 อัปเดตตำแหน่งปัจจุบัน"):
+    # ใช้ JS ดึงพิกัดแบบ Manual เพื่อไม่ให้รบกวนหน้าจอหลัก
+    loc = streamlit_js_eval(js_expressions="new Promise(r => navigator.geolocation.getCurrentPosition(p => r(p.coords)))", key='get_loc_btn')
+    if loc:
+        st.session_state.user_lat = loc['latitude']
+        st.session_state.user_lon = loc['longitude']
+        st.session_state.map_center = [loc['latitude'], loc['longitude']]
+        st.rerun()
 
 all_data = load_spots()
 f_fish = st.sidebar.multiselect("กรองชนิดปลา", list(set(",".join(all_data['fish_type'].astype(str).replace('None','')).split(","))))
-if "" in f_fish: f_fish.remove("")
-f_img = st.sidebar.checkbox("แสดงเฉพาะที่มีรูป")
 
-st.sidebar.divider()
 with st.sidebar.form("add_form", clear_on_submit=True):
     st.subheader("➕ ปักหมุดหมายใหม่")
     n = st.text_input("ชื่อหมาย")
-    fish_type = st.text_input("ปลาที่พบ")
-    u_files = st.file_uploader("ถ่ายรูป (เลือกได้หลายรูป)", type=['jpg','jpeg','png'], accept_multiple_files=True)
+    fish_t = st.text_input("ปลาที่พบ")
+    u_files = st.file_uploader("ถ่ายรูป", type=['jpg','jpeg','png'], accept_multiple_files=True)
     if st.form_submit_button("บันทึกพิกัดปัจจุบัน"):
-        if curr_lat == 13.7563:
-            st.error("รอสัญญาณ GPS สักครู่...")
-        else:
-            urls = []
-            for u_file in u_files:
-                img = Image.open(u_file); img.thumbnail((800, 800))
-                buf = io.BytesIO(); img.save(buf, format='JPEG')
-                fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{u_file.name}"
-                supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
-                # บังคับใช้ HTTPS ลิงก์
-                public_url = supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://")
-                urls.append(public_url)
-            
-            img_url_str = ",".join(urls)
-            supabase.table("spots").insert({"name":n, "lat":curr_lat, "lon":curr_lon, "fish_type":fish_type, "image_url":img_url_str}).execute()
-            st.success(f"บันทึกสำเร็จ {len(urls)} รูป!")
-            st.rerun()
+        urls = []
+        for u_file in u_files:
+            img = Image.open(u_file); img.thumbnail((800, 800))
+            buf = io.BytesIO(); img.save(buf, format='JPEG')
+            fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{u_file.name}"
+            supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
+            urls.append(supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://"))
+        supabase.table("spots").insert({"name":n, "lat":st.session_state.user_lat, "lon":st.session_state.user_lon, "fish_type":fish_t, "image_url":",".join(urls)}).execute()
+        st.success("บันทึกสำเร็จ!")
+        st.rerun()
 
-# --- 5. MAP DISPLAY ---
-df = all_data.copy()
-if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
-if f_img: df = df[df['image_url'] != ""]
-
-st.subheader("🗺️ แผนที่พิกัดหมายตกปลาทั่วไทย")
+# --- 5. MAP DISPLAY (Fragment เพื่อความนิ่ง) ---
+st.subheader("🗺️ แผนที่พิกัดหมายตกปลา")
 
 @st.fragment
-def render_stable_map(display_df, u_lat, u_lon):
-    m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom)
-    folium.Marker([u_lat, u_lon], icon=folium.Icon(color='red', icon='user', prefix='fa'), popup="คุณอยู่ที่นี่").add_to(m)
+def render_map(display_df):
+    # กำหนดจุดกึ่งกลางแผนที่ครั้งแรก
+    if 'map_center' not in st.session_state:
+        st.session_state.map_center = [st.session_state.user_lat, st.session_state.user_lon]
+    
+    m = folium.Map(location=st.session_state.map_center, zoom_start=12)
+    
+    # หมุดปัจจุบัน
+    folium.Marker([st.session_state.user_lat, st.session_state.user_lon], 
+                  icon=folium.Icon(color='red', icon='user', prefix='fa'), popup="คุณอยู่ที่นี่").add_to(m)
 
     for _, row in display_df.iterrows():
         weather_now, weather_fore = get_weather_forecast(row['lat'], row['lon'])
-        water = get_real_water_level(row['name'])
+        images = [u.strip() for u in str(row["image_url"]).split(",")] if row["image_url"] else []
         
-        # จัดการรูปภาพ (ล้างช่องว่างและบังคับ https)
-        images = [u.strip().replace("http://", "https://") for u in str(row["image_url"]).split(",")] if row["image_url"] else []
+        # ปรับ HTML ให้รูปภาพโหลดได้แน่นอนโดยใช้โครงสร้างที่เรียบง่ายขึ้น
         img_html = ""
-        
-        if len(images) > 1:
-            slides = "".join([f'<div class="mySlides fade"><img src="{u}" style="width:100%; border-radius:8px; display:block; min-height:150px; background:#eee;"></div>' for u in images])
-            img_html = f'<div class="slideshow-container">{slides}<a class="prev" onclick="plusSlides(-1, this)">❮</a><a class="next" onclick="plusSlides(1, this)">❯</a></div>'
-        elif len(images) == 1:
-            img_html = f'<img src="{images[0]}" width="100%" style="border-radius:8px; display:block; min-height:150px; background:#eee;">'
+        if images:
+            if len(images) > 1:
+                # Carousel แบบ Simple ที่สุด (Inline CSS)
+                img_html = f'<div style="width:100%; overflow-x:auto; white-space:nowrap; border-radius:8px;">'
+                for u in images:
+                    img_html += f'<img src="{u}" style="height:150px; margin-right:5px; border-radius:5px;">'
+                img_html += '</div><p style="font-size:10px; color:gray;">เลื่อนนิ้วไปทางซ้ายเพื่อดูรูปเพิ่มเติม ⮕</p>'
+            else:
+                img_html = f'<img src="{images[0]}" style="width:100%; border-radius:8px;">'
 
-        # CSS & JS สำหรับ Popup
-        css = "<style>.slideshow-container{position:relative;width:100%;}.mySlides{display:none;}.prev,.next{cursor:pointer;position:absolute;top:50%;width:auto;padding:8px;margin-top:-22px;color:white;font-weight:bold;background:rgba(0,0,0,0.5);border-radius:3px;z-index:10;}.next{right:0;}.fade{animation:fade 1s;}@keyframes fade{from{opacity:.4}to{opacity:1}}</style>"
-        js = '<script>var slideIndex=1; function plusSlides(n,el){showSlides(slideIndex+=n,el.parentElement);} function showSlides(n,container){var i; var slides=container.getElementsByClassName("mySlides"); if(n>slides.length){slideIndex=1} if(n<1){slideIndex=slides.length} for(i=0;i<slides.length;i++){slides[i].style.display="none";} slides[slideIndex-1].style.display="block";} setTimeout(function(){var conts=document.getElementsByClassName("slideshow-container"); for(var j=0;j<conts.length;j++){var s=conts[j].getElementsByClassName("mySlides"); if(s.length>0)s[0].style.display="block";}},300);</script>'
-        
         popup_html = f"""
-{css}
 <div style='font-family:sans-serif; width:220px;'>
-{img_html}
-<h4 style='margin:8px 0 4px 0;'>{row['name']}</h4>
-<b>🐟 ปลา:</b> {row['fish_type']}<br>
-<b>🌡️ อากาศ:</b> {weather_now}<br>
-<b>💧 น้ำ:</b> {water}{weather_fore}
-<a href="https://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
-<button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; cursor:pointer; font-weight:bold;'>🚀 นำทาง</button>
-</a>
-{js if len(images) > 1 else ""}
+    {img_html}
+    <h4 style='margin:10px 0 5px 0;'>{row['name']}</h4>
+    <b>🐟 ปลา:</b> {row['fish_type']}<br>
+    <b>🌡️ อากาศ:</b> {weather_now}<br>
+    {weather_fore}
+    <a href="https://www.google.com/maps/dir/?api=1&destination={row['lat']},{row['lon']}" target="_blank">
+        <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; font-weight:bold;'>🚀 นำทางด้วย Google Maps</button>
+    </a>
 </div>
 """
-        folium.Marker(
-            [row['lat'], row['lon']], 
-            popup=folium.Popup(popup_html, max_width=300), 
-            icon=folium.Icon(color='green', icon='fish', prefix='fa')
-        ).add_to(m)
+        folium.Marker([row['lat'], row['lon']], 
+                      popup=folium.Popup(popup_html, max_width=300), 
+                      icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
-    st_folium(m, width="100%", height=600, key="stable_map_v7")
+    st_folium(m, width="100%", height=550, key="main_map")
 
-render_stable_map(df, curr_lat, curr_lon)
+# กรองข้อมูล
+df_filtered = all_data.copy()
+if f_fish:
+    df_filtered = df_filtered[df_filtered['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 
-st.subheader("📋 รายการหมายทั้งหมด")
-st.dataframe(df[['name', 'fish_type']], use_container_width=True, hide_index=True)
+render_map(df_filtered)
