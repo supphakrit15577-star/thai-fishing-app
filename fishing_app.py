@@ -88,6 +88,7 @@ with st.sidebar.form("add_spot"):
     st.subheader("➕ ปักหมุดหมายใหม่")
     name = st.text_input("ชื่อหมาย (ใส่ชื่อเขื่อน/อ่างเก็บน้ำเพื่อดึงระดับน้ำ)")
     fish = st.text_input("ปลาที่พบ")
+    description = st.text_input ("รายละเอียด")
     files = st.file_uploader("รูปภาพ", type=['jpg','png'], accept_multiple_files=True)
     if st.form_submit_button("บันทึกพิกัดนี้"):
         if gps_raw:
@@ -102,7 +103,7 @@ with st.sidebar.form("add_spot"):
                 urls.append(supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://"))
             
             supabase.table("spots").insert({
-                "name": name, "lat": gps_raw['lat'], "lon": gps_raw['lon'], 
+                "name": name, "lat": gps_raw['lat'], "lon": gps_raw['lon'], "description" : description,
                 "fish_type": fish, "image_url": ",".join(urls)
             }).execute()
             st.success("บันทึกสำเร็จ!")
@@ -138,6 +139,7 @@ def render_fishing_map(df):
             {img_html}
             <h4 style='margin: 8px 0 2px 0; color: #1a73e8;'>{row['name']}</h4>
             <b>🐟 ปลา:</b> {row['fish_type']}<br>
+            <b>รายละเอียด:</b> {row['description']}<br>
             <b>🌡️ ตอนนี้:</b> {weather_now}<br>
             <b>💧 น้ำ:</b> {water_lv}
             <hr style='margin: 5px 0;'>
