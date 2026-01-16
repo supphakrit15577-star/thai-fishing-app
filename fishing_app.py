@@ -20,7 +20,7 @@ st.markdown("""
         padding-bottom: 0rem !important;
         padding-left: 0rem !important;
         padding-right: 0rem !important;
-        max-height: 80vh !important;
+        max-height: 100vh !important;
     }
     /* ซ่อน Footer */
     footer {visibility: hidden;}
@@ -160,6 +160,6 @@ def render_map(df):
         ).add_to(m)
 
     # แสดงผลแผนที่กว้างเต็มจอ (Height ปรับตามความเหมาะสมของอุปกรณ์)
-    st_folium(m, width="100%", height=700, returned_objects=[], key="stable_sidebar_map")
+    st_folium(m, width="100%", height=300, returned_objects=[], key="stable_sidebar_map")
 
 render_map(df)
