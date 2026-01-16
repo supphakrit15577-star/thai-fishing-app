@@ -20,7 +20,7 @@ st.markdown("""
         padding-bottom: 0rem !important;
         padding-left: 0rem !important;
         padding-right: 0rem !important;
-        max-height: 100vh !important;
+        max-height: 80vh !important;
     }
     /* ซ่อน Footer */
     footer {visibility: hidden;}
