@@ -119,10 +119,19 @@ df = all_data.copy()
 if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 if f_img: df = df[df['image_url'] != ""]
 
-m = folium.Map(location=st.session_state.map_center, zoom_start=14)
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [curr_lat, curr_lon]
+if 'map_zoom' not in st.session_state:
+    st.session_state.map_zoom = 12 #Defalt Zoom
+
+if user_loc and 'first_load_done' not in st.session_state:
+    st.session_state.map_center = [curr_lat, curr_lon]
+    st.session_state.first_load_done = True
+
+m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom,control_scale=True)
 
 # หมุดตัวเรา (ขยับตาม GPS เสมอ)
-folium.Marker([curr_lat, curr_lon], icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
+folium.Marker([curr_lat, curr_lon],popup = "ตำแหน่งของคุณ", icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
 
 # หมุดหมายตกปลา
 for _, row in df.iterrows():
@@ -144,9 +153,13 @@ for _, row in df.iterrows():
     folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_c, max_width=250), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
 # แสดงแผนที่
-map_output = st_folium(m, width="100%", height=600, key="fishing_map")
+map_output = st_folium(m, width="100%", height=600, key="fishing_map", returned_objects=["center", "zoom"])
 
 # ส่วนสำคัญ: บันทึกตำแหน่งกล้องล่าสุดที่ผู้ใช้เลื่อนไป
-if map_output and map_output.get('center'):
-    # เก็บค่า Center ล่าสุดไว้ เพื่อไม่ให้ Rerun แล้วกระโดดกลับ
-    st.session_state.map_center = [map_output['center']['lat'], map_output['center']['lng']]
+if map_output:
+        # ถ้าผู้ใช้เลื่อนแผนที่ ให้จำตำแหน่งกึ่งกลางใหม่
+        if map_output.get('center'):
+            st.session_state.map_center = [map_data['center']['lat'], map_data['center']['lng']]
+        # ถ้าผู้ใช้ซูมเข้า/ออก ให้จำค่าซูมล่าสุดไว้ ไม่ให้มันดีดกลับ
+        if map_output.get('zoom'):
+            st.session_state.map_zoom = map_data['zoom']
