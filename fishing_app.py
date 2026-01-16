@@ -48,8 +48,8 @@ def get_weather_info(lat, lon):
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide", initial_sidebar_state="expanded")
 
-# CSS: ซ่อนแค่ Footer เพื่อให้ปุ่มเปิด Sidebar ในมือถือไม่หาย
-st.markdown("""<style>footer {visibility: hidden;} .stApp header {z-index: 1;}</style>""", unsafe_allow_html=True)
+# ซ่อน Footer เพื่อความสวยงาม
+st.markdown("""<style>footer {visibility: hidden;}</style>""", unsafe_allow_html=True)
 
 # GPS Tracking (Watch Position)
 user_loc = streamlit_js_eval(
@@ -67,11 +67,13 @@ user_loc = streamlit_js_eval(
 # จัดการพิกัด GPS
 curr_lat, curr_lon = (user_loc['lat'], user_loc['lon']) if user_loc else (13.7563, 100.5018)
 
-# ระบบคุม Camera ของแผนที่
+# ระบบคุมพิกัดแผนที่ (Session State)
 if 'map_center' not in st.session_state:
     st.session_state.map_center = [curr_lat, curr_lon]
+if 'map_zoom' not in st.session_state:
+    st.session_state.map_zoom = 12
 
-# บังคับให้แผนที่จ้องไปที่ GPS เฉพาะตอนเข้าแอปครั้งแรกเท่านั้น
+# บังคับจ้องไปที่ GPS เฉพาะตอนเปิดแอปครั้งแรก
 if user_loc and 'init_done' not in st.session_state:
     st.session_state.map_center = [curr_lat, curr_lon]
     st.session_state.init_done = True
@@ -81,9 +83,9 @@ st.sidebar.title("🎣 Fishing Pro")
 if user_loc:
     st.sidebar.caption(f"🎯 GPS แม่นยำ: {user_loc['acc']:.1f} ม.")
 
-# ปุ่มรีเซ็ตหน้าจอแผนที่
 if st.sidebar.button("📍 ย้ายกล้องไปที่ตำแหน่งฉัน"):
     st.session_state.map_center = [curr_lat, curr_lon]
+    st.session_state.map_zoom = 15
     st.rerun()
 
 all_data = load_spots()
@@ -114,30 +116,29 @@ with st.sidebar.form("add_form", clear_on_submit=True):
             st.success("บันทึกหมายสำเร็จ!")
             st.rerun()
 
-# --- 5. MAP DISPLAY ---
+# --- 5. MAP DISPLAY (FRAGMENTED) ---
 df = all_data.copy()
 if f_fish: df = df[df['fish_type'].apply(lambda x: any(i in str(x) for i in f_fish))]
 if f_img: df = df[df['image_url'] != ""]
 
-# สร้าง Fragment เพื่อแยกส่วนการวาดแผนที่ ไม่ให้ Rerun ทั้งหน้าเว็บ
+# สร้าง Fragment เพื่อแยกแผนที่ให้นิ่งที่สุด
 @st.fragment
-def show_map_fragment():
-    # ใช้พิกัดจาก session_state เพื่อความเสถียร
+def show_map_fragment(data_frame, c_lat, c_lon):
     m = folium.Map(
         location=st.session_state.map_center, 
         zoom_start=st.session_state.map_zoom,
         control_scale=True
     )
 
-    # หมุดตัวเรา (ขยับตาม GPS)
+    # หมุดตัวเรา
     folium.Marker(
-        [curr_lat, curr_lon],
+        [c_lat, c_lon],
         popup="ตำแหน่งของคุณ",
         icon=folium.Icon(color='red', icon='user', prefix='fa')
     ).add_to(m)
 
     # หมุดหมายตกปลา
-    for _, row in df.iterrows():
+    for _, row in data_frame.iterrows():
         weather = get_weather_info(row['lat'], row['lon'])
         water = get_real_water_level(row['name'])
         img_html = f'<img src="{row["image_url"]}" width="100%" style="border-radius:10px;">' if row['image_url'] else ""
@@ -149,49 +150,14 @@ def show_map_fragment():
             <b>🌡️ อากาศ:</b> {weather}<br>
             <b>💧 น้ำ:</b> {water}<br>
             <a href="google.navigation:q={row['lat']},{row['lon']}" target="_blank">
-                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 เปิดแผนที่นำทาง</button>
+                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 นำทาง</button>
             </a>
         </div>
         """
         folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_c, max_width=250), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
 
-    # จุดสำคัญ: ไม่ต้องใช้ returned_objects เพื่อลดการส่งข้อมูลกลับมา rerun
-    # และลดการใช้ key เดิมๆ เพื่อป้องกัน Cache ค้าง
-    st_folium(m, width="100%", height=600, key="stable_map")
+    # เรียกแผนที่ (ไม่รับค่ากลับมา rerun เพื่อให้นิ่งสนิท)
+    st_folium(m, width="100%", height=600, key="stable_fishing_map")
 
-# เรียกใช้งาน Fragment
-show_map_fragment()
-
-# หมุดตัวเรา (ขยับตาม GPS เสมอ)
-folium.Marker([curr_lat, curr_lon],popup = "ตำแหน่งของคุณ", icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
-
-# หมุดหมายตกปลา
-for _, row in df.iterrows():
-    weather = get_weather_info(row['lat'], row['lon'])
-    water = get_real_water_level(row['name'])
-    img_html = f'<img src="{row["image_url"]}" width="100%" style="border-radius:10px;">' if row['image_url'] else ""
-    
-    popup_c = f"""
-    <div style='font-family:sans-serif; min-width:200px;'>
-        {img_html}<h4>{row['name']}</h4>
-        <b>🐟 ปลา:</b> {row['fish_type']}<br>
-        <b>🌡️ อากาศ:</b> {weather}<br>
-        <b>💧 น้ำ:</b> {water}<br>
-        <a href="google.navigation:q={row['lat']},{row['lon']}" target="_blank">
-            <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px;'>🚀 เปิดแผนที่นำทาง</button>
-        </a>
-    </div>
-    """
-    folium.Marker([row['lat'], row['lon']], popup=folium.Popup(popup_c, max_width=250), icon=folium.Icon(color='green', icon='fish', prefix='fa')).add_to(m)
-
-# แสดงแผนที่
-map_output = st_folium(m, width="100%", height=600, key="fishing_map", returned_objects=["center", "zoom"])
-
-# ส่วนสำคัญ: บันทึกตำแหน่งกล้องล่าสุดที่ผู้ใช้เลื่อนไป
-if map_output:
-        # ถ้าผู้ใช้เลื่อนแผนที่ ให้จำตำแหน่งกึ่งกลางใหม่
-        if map_output.get('center'):
-            st.session_state.map_center = [map_output['center']['lat'], map_output['center']['lng']]
-        # ถ้าผู้ใช้ซูมเข้า/ออก ให้จำค่าซูมล่าสุดไว้ ไม่ให้มันดีดกลับ
-        if map_output.get('zoom'):
-            st.session_state.map_zoom = map_output['zoom']
+# รันแผนที่ในรูปแบบ Fragment
+show_map_fragment(df, curr_lat, curr_lon)
