@@ -9,35 +9,21 @@ from supabase import create_client, Client
 from PIL import Image
 import io
 
-# --- 1. SET PAGE & CSS ---
+# --- 1. SET PAGE & FULL WIDTH CSS ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide")
 
-# CSS สำหรับจัดการ Layout ให้แผนที่เต็มจอและสร้าง Floating UI
 st.markdown("""
     <style>
-    /* ปรับแต่งพื้นที่หลักให้ชิดขอบ */
+    /* ขยายพื้นที่หลักให้กว้างสุดขอบ */
     .main .block-container {
-        padding: 0rem !important;
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+        padding-left: 0rem !important;
+        padding-right: 0rem !important;
         max-width: 100vw !important;
     }
-    
-    /* สร้าง Floating Menu ด้านซ้ายบน */
-    .floating-box {
-        position: fixed;
-        top: 60px; /* หลบ Header ลงมาหน่อย */
-        left: 10px;
-        z-index: 999;
-        background: rgba(255, 255, 255, 0.95);
-        padding: 15px;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        width: 280px;
-        border: 1px solid #ddd;
-    }
-    
-    /* ซ่อน Footer แต่เปิด Header ไว้ */
+    /* ซ่อน Footer */
     footer {visibility: hidden;}
-    header {background-color: rgba(255,255,255,0.8) !important;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -81,48 +67,49 @@ if 'center_lon' not in st.session_state: st.session_state.center_lon = 100.5018
 
 gps = streamlit_js_eval(
     js_expressions="new Promise((r) => {navigator.geolocation.getCurrentPosition((p) => r({lat: p.coords.latitude, lon: p.coords.longitude}), (e) => r(null), {enableHighAccuracy: true})})",
-    key='gps_v14'
+    key='gps_sidebar_ver'
 )
 
-# --- 4. FLOATING MENU UI (ซ้อนบนแผนที่) ---
-with st.container():
-    st.markdown('<div class="floating-box">', unsafe_allow_html=True)
-    st.subheader("🎣 Fishing Control")
+# --- 4. SIDEBAR MENU (เมนูแบบเดิม) ---
+with st.sidebar:
+    st.title("🎣 Fishing Pro")
+    st.write("ระบบจัดการจุดตกปลา")
     
-    if st.button("🎯 โฟกัสตำแหน่งฉัน"):
+    if st.button("🎯 โฟกัสตำแหน่งปัจจุบัน", use_container_width=True):
         if gps:
             st.session_state.center_lat = gps['lat']
             st.session_state.center_lon = gps['lon']
             st.rerun()
 
-    with st.expander("➕ เพิ่มจุดหมาย (Spot)"):
-        with st.form("add_spot_form", clear_on_submit=True):
-            n = st.text_input("ชื่อหมาย")
-            f_t = st.text_input("ปลาที่พบ")
-            up_files = st.file_uploader("รูปภาพ", accept_multiple_files=True)
-            if st.form_submit_button("บันทึกจุดนี้"):
-                if gps:
-                    urls = []
-                    for uf in up_files:
-                        img = Image.open(uf).convert("RGB")
-                        img.thumbnail((800, 800))
-                        buf = io.BytesIO()
-                        img.save(buf, format='JPEG')
-                        fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uf.name}"
-                        supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
-                        urls.append(supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://"))
-                    
-                    supabase.table("spots").insert({
-                        "name": n, "lat": gps['lat'], "lon": gps['lon'], 
-                        "fish_type": f_t, "image_url": ",".join(urls)
-                    }).execute()
-                    st.success("บันทึกสำเร็จ!")
-                    st.rerun()
-                else:
-                    st.error("ไม่พบพิกัด GPS")
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.divider()
+    
+    st.subheader("➕ เพิ่มจุดหมายใหม่")
+    with st.form("add_spot_form", clear_on_submit=True):
+        n = st.text_input("ชื่อหมาย")
+        f_t = st.text_input("ปลาที่พบ")
+        up_files = st.file_uploader("เลือกรูปภาพ", accept_multiple_files=True)
+        if st.form_submit_button("บันทึกพิกัดจริงเดี๋ยวนี้", use_container_width=True):
+            if gps:
+                urls = []
+                for uf in up_files:
+                    img = Image.open(uf).convert("RGB")
+                    img.thumbnail((800, 800))
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG')
+                    fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uf.name}"
+                    supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
+                    urls.append(supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://"))
+                
+                supabase.table("spots").insert({
+                    "name": n, "lat": gps['lat'], "lon": gps['lon'], 
+                    "fish_type": f_t, "image_url": ",".join(urls)
+                }).execute()
+                st.success("บันทึกสำเร็จ!")
+                st.rerun()
+            else:
+                st.error("กรุณาเปิด GPS บนเบราว์เซอร์")
 
-# --- 5. FULL SCREEN MAP ---
+# --- 5. MAIN CONTENT (MAP) ---
 df = load_spots()
 
 @st.fragment
@@ -133,24 +120,36 @@ def render_map(df):
         tiles="OpenStreetMap"
     )
 
+    # หมุดตำแหน่งเรา
     if gps:
-        folium.Marker([gps['lat'], gps['lon']], icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
+        folium.Marker(
+            [gps['lat'], gps['lon']], 
+            icon=folium.Icon(color='red', icon='user', prefix='fa'),
+            popup="คุณอยู่ที่นี่"
+        ).add_to(m)
 
+    # หมุดจุดตกปลา
     for _, row in df.iterrows():
         weather, water = get_weather_water(row['lat'], row['lon'], row['name'])
         images = str(row["image_url"]).split(",") if row["image_url"] else []
-        img_html = f'<img src="{images[0]}" style="width:100%; border-radius:8px; margin-bottom:5px;">' if images and images[0] else ""
+        
+        # จัดการรูปภาพแบบเลื่อน
+        img_html = ""
+        if images and images[0]:
+            img_html = '<div style="display: flex; overflow-x: auto; gap: 5px; width: 220px; background:#f0f0f0; border-radius:8px; padding:5px;">'
+            for u in images:
+                img_html += f'<img src="{u}" style="height: 120px; border-radius: 5px; flex-shrink: 0;">'
+            img_html += '</div>'
 
         popup_content = f"""
-        <div style='width:220px; font-family:sans-serif;'>
+        <div style='width: 220px; font-family: sans-serif;'>
             {img_html}
-            <h4 style='margin:0;'>{row['name']}</h4>
-            <hr style='margin:5px 0;'>
+            <h4 style='margin: 8px 0 2px 0; color: #1a73e8;'>{row['name']}</h4>
             <b>🐟 ปลา:</b> {row['fish_type']}<br>
             <b>🌡️ อากาศ:</b> {weather}<br>
-            <b>💧 น้ำ:</b> {water}<br>
+            <b>💧 ระดับน้ำ:</b> {water}<br>
             <a href="google.navigation:q={row['lat']},{row['lon']}" target="_blank">
-                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; font-weight:bold;'>🚀 นำทาง</button>
+                <button style='width:100%; background:#4285F4; color:white; border:none; padding:10px; border-radius:5px; margin-top:10px; font-weight:bold; cursor:pointer;'>🚀 เปิดแอปนำทาง</button>
             </a>
         </div>
         """
@@ -160,7 +159,7 @@ def render_map(df):
             icon=folium.Icon(color='green', icon='fish', prefix='fa')
         ).add_to(m)
 
-    # แสดงผลแผนที่ความสูงเต็มจอ (หักลบ Header เล็กน้อย)
-    st_folium(m, width="100%", height=850, returned_objects=[], key="fishing_map_v14")
+    # แสดงผลแผนที่กว้างเต็มจอ (Height ปรับตามความเหมาะสมของอุปกรณ์)
+    st_folium(m, width="100%", height=700, returned_objects=[], key="stable_sidebar_map")
 
 render_map(df)
