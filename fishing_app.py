@@ -192,7 +192,7 @@ def render_stable_map(display_df, u_lat, u_lon):
         </script>
         """
         
-       popup_content = f"""
+        popup_content = f"""
         {css_style}
         <div style='font-family:sans-serif; min-width:220px;'>
             {img_html}
