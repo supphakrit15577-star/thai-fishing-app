@@ -10,13 +10,15 @@ from PIL import Image
 import io
 import re
 import traceback
+import os
+from dotenv import load_dotenv
+from supabase import create_client, Client
 
-# --- 1. CONFIGURATION ---
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-# Service Role Key สำหรับการอัปโหลดไฟล์ (มีสิทธิ์ bypass RLS)
-const SUPABASE_SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
-WEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY
+load_dotenv()
+SUPABASE_URL: str = os.getenv("SUPABASE_URL")
+SUPABASE_KEY: str = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY")
+WEATHER_API_KEY: str = os.getenv("WEATHER_API_KEY")
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
