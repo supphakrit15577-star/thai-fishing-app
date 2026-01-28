@@ -12,11 +12,11 @@ import re
 import traceback
 
 # --- 1. CONFIGURATION ---
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://ajurexheolscvnkycaqo.supabase.co")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqdXJleGhlb2xzY3Zua3ljYXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyMDk2OTYsImV4cCI6MjA4Mzc4NTY5Nn0.i6akECleLwulyUDiWHthrEaFj-jYk6lNHuFq9T0n_ts")
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 # Service Role Key สำหรับการอัปโหลดไฟล์ (มีสิทธิ์ bypass RLS)
-SUPABASE_SERVICE_KEY = st.secrets.get("SUPABASE_SERVICE_KEY", None)
-WEATHER_API_KEY = "2e323a6a31b3c5ffae1efed13dad633b"
+const SUPABASE_SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+WEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
