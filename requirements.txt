@@ -6,3 +6,4 @@ requests
 streamlit-js-eval
 Pillow
 supabase
+python-dotenv
