@@ -169,15 +169,6 @@ with st.sidebar.form("add_spot"):
         # ตรวจสอบการตั้งค่า Service Key
         elif not db_configured:
             st.error("❌ ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_KEY")
-            st.warning("""
-            **การบันทึกข้อมูลจะล้มเหลว** เนื่องจาก Row Level Security (RLS)
-            
-            **วิธีแก้ไข:**
-            1. ไปที่ Supabase Dashboard → Settings → API
-            2. คัดลอก Service Role Key (secret key)
-            3. เพิ่มใน `.streamlit/secrets.toml`: `SUPABASE_SERVICE_KEY = "your-key"`
-            4. รีสตาร์ทแอป
-            """)
         else:
             try:
                 # ใช้ GPS ถ้ามี ไม่เช่นนั้นใช้ session state
