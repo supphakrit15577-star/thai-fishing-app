@@ -8,16 +8,37 @@ from streamlit_js_eval import streamlit_js_eval
 from supabase import create_client, Client
 from PIL import Image
 import io
+import re
+import traceback
 
 # --- 1. CONFIGURATION ---
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://ajurexheolscvnkycaqo.supabase.co")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqdXJleGhlb2xzY3Zua3ljYXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyMDk2OTYsImV4cCI6MjA4Mzc4NTY5Nn0.i6akECleLwulyUDiWHthrEaFj-jYk6lNHuFq9T0n_ts")
+# Service Role Key สำหรับการอัปโหลดไฟล์ (มีสิทธิ์ bypass RLS)
+SUPABASE_SERVICE_KEY = st.secrets.get("SUPABASE_SERVICE_KEY", None)
 WEATHER_API_KEY = "2e323a6a31b3c5ffae1efed13dad633b"
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except:
-    st.error("เชื่อมต่อ Supabase ไม่สำเร็จ")
+    # สร้าง client สำหรับ operations ที่ต้องการ bypass RLS (ใช้ service key ถ้ามี)
+    if SUPABASE_SERVICE_KEY:
+        supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        supabase_storage = supabase_admin  # ใช้ service key สำหรับ storage
+        supabase_db = supabase_admin  # ใช้ service key สำหรับ database operations
+        storage_configured = True
+        db_configured = True
+    else:
+        supabase_storage = supabase  # ใช้ anon key ถ้าไม่มี service key
+        supabase_db = supabase  # ใช้ anon key สำหรับ database
+        storage_configured = False
+        db_configured = False
+except Exception as e:
+    st.error(f"เชื่อมต่อ Supabase ไม่สำเร็จ: {str(e)}")
+    supabase = None
+    supabase_storage = None
+    supabase_db = None
+    storage_configured = False
+    db_configured = False
 
 # --- 2. CACHED FUNCTIONS (หัวใจความเร็ว: ดึงข้อมูลแล้วจำไว้) ---
 @st.cache_data(ttl=3600)  # จำข้อมูลระดับน้ำ 1 ชั่วโมง
@@ -86,47 +107,212 @@ gps_raw = streamlit_js_eval(
 # --- 4. SIDEBAR ---
 st.sidebar.title("🎣 Fishing Pro")
 
+# แสดงตำแหน่งปัจจุบัน
+st.sidebar.info(f"📍 ตำแหน่งปัจจุบัน:\n{st.session_state.v_lat:.4f}, {st.session_state.v_lon:.4f}")
+
 if st.sidebar.button("🎯 อัปเดตพิกัดปัจจุบัน"):
-    if gps_raw:
+    if gps_raw and 'lat' in gps_raw and 'lon' in gps_raw:
         st.session_state.v_lat = gps_raw['lat']
         st.session_state.v_lon = gps_raw['lon']
+        st.success(f"อัปเดตตำแหน่ง: {gps_raw['lat']:.4f}, {gps_raw['lon']:.4f}")
         st.rerun()
+    else:
+        st.warning("ไม่สามารถดึงตำแหน่ง GPS ได้ กรุณาอนุญาตให้เข้าถึงตำแหน่งในเบราว์เซอร์ หรือใช้พิกัดปัจจุบัน")
+
+# ตัวเลือกป้อนพิกัดเอง
+with st.sidebar.expander("📍 ป้อนพิกัดเอง"):
+    manual_lat = st.number_input("ละติจูด (Latitude)", value=st.session_state.v_lat, format="%.6f")
+    manual_lon = st.number_input("ลองจิจูด (Longitude)", value=st.session_state.v_lon, format="%.6f")
+    if st.button("✅ ใช้พิกัดนี้"):
+        st.session_state.v_lat = manual_lat
+        st.session_state.v_lon = manual_lon
+        st.success(f"ตั้งค่าพิกัด: {manual_lat:.4f}, {manual_lon:.4f}")
+        st.rerun()
+
+# แสดงสถานะการตั้งค่า
+if not storage_configured or not db_configured:
+    with st.sidebar.expander("⚠️ คำแนะนำการตั้งค่า", expanded=False):
+        st.warning("""
+        **การบันทึกข้อมูลและอัปโหลดรูปภาพอาจไม่ทำงาน** เนื่องจาก Row Level Security (RLS)
+        
+        **วิธีแก้ไข:**
+        1. ไปที่ Supabase Dashboard → Settings → API
+        2. คัดลอก **Service Role Key** (secret key)
+        3. เพิ่มใน Streamlit secrets:
+           - สร้างไฟล์ `.streamlit/secrets.toml`
+           - เพิ่ม: `SUPABASE_SERVICE_KEY = "your-service-key-here"`
+        4. รีสตาร์ทแอปพลิเคชัน
+        
+        **หมายเหตุ:** Service Role Key มีสิทธิ์สูงมาก ควรเก็บเป็นความลับ
+        """)
 
 all_data = load_spots()
 
 with st.sidebar.form("add_spot"):
     st.subheader("➕ ปักหมุดหมายใหม่")
-    name = st.text_input("ชื่อหมาย (ใส่ชื่อเขื่อน/อ่างเก็บน้ำเพื่อดึงระดับน้ำ)")
-    fish = st.text_input("ปลาที่พบ")
-    description = st.text_input ("รายละเอียด")
-    files = st.file_uploader("รูปภาพ", type=['jpg','png'], accept_multiple_files=True)
+    
+    # แสดงพิกัดที่จะใช้บันทึก
+    gps_status = "✅ GPS" if (gps_raw and 'lat' in gps_raw) else "📍 พิกัดปัจจุบัน"
+    st.caption(f"{gps_status}: {st.session_state.v_lat:.4f}, {st.session_state.v_lon:.4f}")
+    
+    name = st.text_input("ชื่อหมาย (ใส่ชื่อเขื่อน/อ่างเก็บน้ำเพื่อดึงระดับน้ำ)", key="spot_name")
+    fish = st.text_input("ปลาที่พบ", key="spot_fish")
+    description = st.text_input("รายละเอียด", key="spot_desc")
+    files = st.file_uploader("รูปภาพ", type=['jpg','png','jpeg'], accept_multiple_files=True, key="spot_images")
     if st.form_submit_button("บันทึกพิกัดนี้"):
-        if gps_raw:
+        # ตรวจสอบการเชื่อมต่อ Supabase
+        if 'supabase' not in globals() or supabase is None:
+            st.error("ไม่สามารถเชื่อมต่อ Supabase ได้ กรุณาตรวจสอบการตั้งค่า")
+        # ตรวจสอบว่ามีชื่อจุดตกปลาหรือไม่
+        elif not name or not name.strip():
+            st.error("กรุณากรอกชื่อจุดตกปลา")
+        # ตรวจสอบการตั้งค่า Service Key
+        elif not db_configured:
+            st.error("❌ ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_KEY")
+            st.warning("""
+            **การบันทึกข้อมูลจะล้มเหลว** เนื่องจาก Row Level Security (RLS)
+            
+            **วิธีแก้ไข:**
+            1. ไปที่ Supabase Dashboard → Settings → API
+            2. คัดลอก Service Role Key (secret key)
+            3. เพิ่มใน `.streamlit/secrets.toml`: `SUPABASE_SERVICE_KEY = "your-key"`
+            4. รีสตาร์ทแอป
+            """)
+        else:
             try:
+                # ใช้ GPS ถ้ามี ไม่เช่นนั้นใช้ session state
+                use_lat = gps_raw['lat'] if gps_raw and 'lat' in gps_raw else st.session_state.v_lat
+                use_lon = gps_raw['lon'] if gps_raw and 'lon' in gps_raw else st.session_state.v_lon
+                
                 urls = []
                 if files:
-                    for f in files:
+                    # ตรวจสอบว่า supabase_storage พร้อมใช้งานหรือไม่
+                    if 'supabase_storage' not in globals() or supabase_storage is None:
+                        st.error("ไม่สามารถเชื่อมต่อ Supabase Storage ได้")
+                        st.warning("จะบันทึกข้อมูลโดยไม่มีรูปภาพ")
+                    elif not storage_configured:
+                        st.warning("⚠️ ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_KEY - การอัปโหลดรูปภาพอาจล้มเหลว")
+                    
+                    # ตรวจสอบจำนวนไฟล์
+                    total_files = len(files)
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for idx, f in enumerate(files):
                         try:
+                            status_text.text(f"กำลังอัปโหลดรูป {idx + 1}/{total_files}: {f.name}")
+                            
+                            # ตรวจสอบขนาดไฟล์ (จำกัดที่ 10MB)
+                            if f.size > 10 * 1024 * 1024:
+                                st.warning(f"ไฟล์ {f.name} ใหญ่เกินไป (มากกว่า 10MB) จะถูกย่อขนาดอัตโนมัติ")
+                            
+                            # อ่านและประมวลผลรูปภาพ
                             img = Image.open(f).convert("RGB")
-                            img.thumbnail((800, 800))
+                            img.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                            
+                            # สร้าง buffer และบันทึกรูป
                             buf = io.BytesIO()
-                            img.save(buf, format='JPEG')
-                            fname = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{f.name}"
-                            supabase.storage.from_("fishing_images").upload(fname, buf.getvalue())
-                            urls.append(supabase.storage.from_("fishing_images").get_public_url(fname).replace("http://", "https://"))
+                            img.save(buf, format='JPEG', quality=85)
+                            buf.seek(0)  # Reset buffer position
+                            
+                            # สร้างชื่อไฟล์ที่ปลอดภัย
+                            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', f.name)
+                            timestamp = datetime.now().strftime('%Y%m%d%H%M%S_%f')
+                            fname = f"{timestamp}_{safe_name}"
+                            
+                            # อัปโหลดไปยัง Supabase Storage (ใช้ supabase_storage ที่มีสิทธิ์ bypass RLS)
+                            upload_result = supabase_storage.storage.from_("fishing_images").upload(
+                                fname, 
+                                buf.getvalue(),
+                                file_options={"content-type": "image/jpeg", "upsert": "true"}
+                            )
+                            
+                            # ดึง public URL
+                            public_url = supabase_storage.storage.from_("fishing_images").get_public_url(fname)
+                            # แปลง http เป็น https
+                            if public_url.startswith("http://"):
+                                public_url = public_url.replace("http://", "https://")
+                            
+                            urls.append(public_url)
+                            
+                            # อัปเดต progress
+                            progress_bar.progress((idx + 1) / total_files)
+                            
                         except Exception as e:
-                            st.warning(f"ไม่สามารถอัปโหลดรูป {f.name}: {str(e)}")
+                            error_msg = str(e)
+                            # ตรวจสอบว่าเป็น RLS error หรือไม่
+                            if "row-level security policy" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                                st.error(f"❌ ไม่สามารถอัปโหลดรูป {f.name} เนื่องจาก Row Level Security (RLS)")
+                                st.warning("""
+                                **วิธีแก้ไข:**
+                                1. ไปที่ Supabase Dashboard → Storage → Policies
+                                2. ตั้งค่า Policy สำหรับ bucket `fishing_images` ให้อนุญาตการอัปโหลด
+                                3. หรือเพิ่ม `SUPABASE_SERVICE_KEY` ใน Streamlit secrets เพื่อ bypass RLS
+                                
+                                **ตั้งค่า Service Key:**
+                                - ไปที่ Supabase Dashboard → Settings → API
+                                - คัดลอก Service Role Key (secret)
+                                - เพิ่มใน Streamlit: `.streamlit/secrets.toml` → `SUPABASE_SERVICE_KEY = "your-service-key"`
+                                """)
+                            else:
+                                st.error(f"ไม่สามารถอัปโหลดรูป {f.name}: {error_msg}")
+                            with st.expander(f"รายละเอียดข้อผิดพลาด - {f.name}"):
+                                st.code(traceback.format_exc())
+                    
+                    # ลบ progress bar และ status text
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    if urls:
+                        st.success(f"อัปโหลดรูปภาพ {len(urls)}/{total_files} ไฟล์สำเร็จ")
                 
-                supabase.table("spots").insert({
-                    "name": name, "lat": gps_raw['lat'], "lon": gps_raw['lon'], "description": description or "",
-                    "fish_type": fish, "image_url": ",".join(urls) if urls else ""
-                }).execute()
-                st.success("บันทึกสำเร็จ!")
-                st.rerun()
+                # บันทึกข้อมูลจุดตกปลา (ใช้ supabase_db ที่มีสิทธิ์ bypass RLS)
+                insert_data = {
+                    "name": name.strip(),
+                    "lat": use_lat,
+                    "lon": use_lon,
+                    "description": (description or "").strip(),
+                    "fish_type": (fish or "").strip(),
+                    "image_url": ",".join(urls) if urls else ""
+                }
+                
+                # ตรวจสอบว่า supabase_db พร้อมใช้งานหรือไม่
+                if 'supabase_db' not in globals() or supabase_db is None:
+                    st.error("ไม่สามารถเชื่อมต่อ Supabase Database ได้")
+                    st.stop()
+                
+                result = supabase_db.table("spots").insert(insert_data).execute()
+                
+                if result.data:
+                    st.success(f"บันทึกจุดตกปลา '{name}' สำเร็จ! (พิกัด: {use_lat:.4f}, {use_lon:.4f})")
+                    if urls:
+                        st.info(f"อัปโหลดรูปภาพ {len(urls)} ไฟล์สำเร็จ")
+                    # รีเฟรชข้อมูล
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error("บันทึกข้อมูลไม่สำเร็จ")
+                    
             except Exception as e:
-                st.error(f"เกิดข้อผิดพลาด: {str(e)}")
-        else:
-            st.warning("กรุณาอนุญาตให้เข้าถึงตำแหน่ง GPS")
+                error_msg = str(e)
+                # ตรวจสอบว่าเป็น RLS error หรือไม่
+                if "row-level security policy" in error_msg.lower() or "42501" in error_msg:
+                    st.error("❌ การบันทึกข้อมูลล้มเหลวเนื่องจาก Row Level Security (RLS)")
+                    st.warning("""
+                    **วิธีแก้ไข:**
+                    1. ไปที่ Supabase Dashboard → Settings → API
+                    2. คัดลอก Service Role Key (secret key)
+                    3. เพิ่มใน `.streamlit/secrets.toml`: `SUPABASE_SERVICE_KEY = "your-key"`
+                    4. รีสตาร์ทแอป
+                    
+                    **หรือตั้งค่า RLS Policy:**
+                    - ไปที่ Supabase Dashboard → Authentication → Policies
+                    - ตั้งค่า Policy สำหรับ table "spots" ให้อนุญาตการ insert
+                    """)
+                else:
+                    st.error(f"เกิดข้อผิดพลาด: {error_msg}")
+                with st.expander("รายละเอียดข้อผิดพลาด"):
+                    st.code(traceback.format_exc())
 
 # --- 5. STABLE MAP DISPLAY ---
 st.subheader("🗺️ แผนที่พิกัดตกปลา")
@@ -135,9 +321,14 @@ st.subheader("🗺️ แผนที่พิกัดตกปลา")
 def render_fishing_map(df):
     m = folium.Map(location=[st.session_state.v_lat, st.session_state.v_lon], zoom_start=12)
 
-    # หมุดคุณ
-    if gps_raw:
-        folium.Marker([gps_raw['lat'], gps_raw['lon']], icon=folium.Icon(color='red', icon='user', prefix='fa')).add_to(m)
+    # หมุดคุณ - ใช้ GPS ถ้ามี ไม่เช่นนั้นใช้ตำแหน่งจาก session state
+    user_lat = gps_raw['lat'] if gps_raw and 'lat' in gps_raw else st.session_state.v_lat
+    user_lon = gps_raw['lon'] if gps_raw and 'lon' in gps_raw else st.session_state.v_lon
+    folium.Marker(
+        [user_lat, user_lon], 
+        icon=folium.Icon(color='red', icon='user', prefix='fa'),
+        tooltip="ตำแหน่งของคุณ"
+    ).add_to(m)
 
     for _, row in df.iterrows():
         # ดึงข้อมูลที่ Cache ไว้ (เร็วและไม่ทำให้แผนที่กระพริบ)
