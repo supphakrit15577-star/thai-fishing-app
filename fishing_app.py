@@ -11,29 +11,68 @@ import io
 import re
 import traceback
 import os
-from dotenv import load_dotenv
-from supabase import create_client, Client
+import math
+import time
+import httpx
 
-load_dotenv()
-SUPABASE_URL: str = os.getenv("SUPABASE_URL")
-SUPABASE_KEY: str = os.getenv("SUPABASE_KEY")
-SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY")
-WEATHER_API_KEY: str = os.getenv("WEATHER_API_KEY")
+def run_with_retry(operation, description="Database operation", max_retries=3, delay=1):
+    """
+    Utility function to retry database operations on transient failures.
+    """
+    for i in range(max_retries):
+        try:
+            return operation().execute()
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
+            if i == max_retries - 1:
+                st.error(f"❌ {description} ล้มเหลวหลังจากพยายาม {max_retries} ครั้ง: {str(e)}")
+                raise e
+            time.sleep(delay * (i + 1)) # Exponential-ish backoff
+        except Exception as e:
+            # For other errors, we might still want to retry if it's a connection issue disguised
+            if "disconnect" in str(e).lower() or "timeout" in str(e).lower():
+                if i == max_retries - 1: raise e
+                time.sleep(delay * (i + 1))
+            else:
+                raise e
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate the great circle distance between two points 
+    on the earth (specified in decimal degrees) in meters.
+    """
+    # Convert decimal degrees to radians 
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+
+    # Haversine formula 
+    dlon = lon2 - lon1 
+    dlat = lat2 - lat1 
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a)) 
+    r = 6371000 # Radius of earth in meters
+    return c * r
+
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+SUPABASE_SERVICE_KEY = st.secrets["SUPABASE_SERVICE_KEY"]
+WEATHER_API_KEY = st.secrets["WEATHER_API_KEY"]
 
 try:
+    # เริ่มต้น Supabase Clients
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    # สร้าง client สำหรับ operations ที่ต้องการ bypass RLS (ใช้ service key ถ้ามี)
+    supabase_storage = supabase
+    supabase_db = supabase  # เริ่มต้นด้วย anon key เสมอ
+    storage_configured = False
+    db_configured = False
+
     if SUPABASE_SERVICE_KEY:
-        supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        supabase_storage = supabase_admin  # ใช้ service key สำหรับ storage
-        supabase_db = supabase_admin  # ใช้ service key สำหรับ database operations
-        storage_configured = True
-        db_configured = True
-    else:
-        supabase_storage = supabase  # ใช้ anon key ถ้าไม่มี service key
-        supabase_db = supabase  # ใช้ anon key สำหรับ database
-        storage_configured = False
-        db_configured = False
+        try:
+            supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            supabase_storage = supabase_admin 
+            supabase_db = supabase_admin
+            storage_configured = True
+            db_configured = True
+        except Exception as e:
+            st.error(f"⚠️ ไม่สามารถเชื่อมต่อด้วย Service Key ได้ (จะใช้ Anon Key แทน): {str(e)}")
 except Exception as e:
     st.error(f"เชื่อมต่อ Supabase ไม่สำเร็จ: {str(e)}")
     supabase = None
@@ -89,10 +128,141 @@ def get_full_weather(lat, lon):
 @st.cache_data(ttl=600)
 def load_spots():
     try:
-        res = supabase.table("spots").select("*").execute()
+        # ใช้ supabase_db (ซึ่งอาจจะถูก override เป็น admin client แล้ว)
+        res = run_with_retry(lambda: supabase_db.table("spots").select("*"), "ดึงข้อมูลจุดตกปลา")
         return pd.DataFrame(res.data)
-    except:
+    except Exception as e:
+        st.error(f"ไม่สามารถโหลดข้อมูลได้: {str(e)}")
         return pd.DataFrame(columns=['name', 'lat', 'lon', 'fish_type', 'image_url', 'description'])
+
+# --- ฟังก์ชันจัดการข้อมูล (หัวใจหลัก) ---
+def save_fishing_spot(name, fish_type, description, images_urls, lat, lon):
+    if supabase_db is None:
+        st.error("ไม่สามารถเชื่อมต่อฐานข้อมูลได้")
+        return False
+
+    try:
+        # 1. ค้นหาจุดที่มีอยู่ทั้งหมด
+        res = run_with_retry(lambda: supabase_db.table("spots").select("*"), "ค้นหาจุดเดิม")
+        df_existing = pd.DataFrame(res.data)
+    
+        match = None
+        if not df_existing.empty:
+            # เช็คชื่อตรงกัน หรือ พิกัดใกล้เคียงกัน (ระยะทางน้อยกว่า 100 เมตร)
+            # เราจะวนลูปเช็คระยะทาง หรือใช้ logic ที่มีประสิทธิภาพกว่าถ้าข้อมูลเยอะ
+            # สำหรับตอนนี้ วนลูปเช็คระยะทางใน DataFrame
+            
+            # กรองตามชื่อก่อนเพื่อความเร็ว
+            name_match = df_existing[df_existing['name'] == name]
+            if not name_match.empty:
+                match = name_match
+            else:
+                # ถ้าชื่อไม่ตรง เช็คพิกัดใกล้เคียง (100 เมตร)
+                def check_distance(row):
+                    return haversine_distance(lat, lon, row['lat'], row['lon'])
+                
+                df_existing['distance'] = df_existing.apply(check_distance, axis=1)
+                proximity_match = df_existing[df_existing['distance'] <= 100].copy() # รัศมี 100 เมตร
+                if not proximity_match.empty:
+                    match = proximity_match.sort_values('distance')
+
+        if match is not None and not match.empty:
+            # --- กรณีมีจุดเดิมหรือจุดใกล้เคียงอยู่แล้ว: ให้ "รวม" ข้อมูล ---
+            target_row = match.iloc[0]
+            
+            old_fish = str(target_row.get('fish_type', ''))
+            old_images = str(target_row.get('image_url', ''))
+            old_desc = str(target_row.get('description', ''))
+
+            # 1. รวมชื่อปลา (เอาที่ซ้ำออก)
+            new_fish_list = [f.strip() for f in (old_fish + "," + fish_type).split(",") if f.strip()]
+            updated_fish = ", ".join(sorted(list(set(new_fish_list))))
+            
+            # 2. รวมรูปภาพ (เอาที่ซ้ำออก)
+            new_img_str = ",".join(images_urls)
+            old_img_list = [u.strip() for u in old_images.split(",") if u.strip()]
+            new_img_list = [u.strip() for u in new_img_str.split(",") if u.strip()]
+            updated_images = ",".join(list(dict.fromkeys(old_img_list + new_img_list)))
+
+            # 3. รวมรายละเอียด (ถ้ามีข้อมูลใหม่ ให้ต่อท้าย)
+            updated_desc = old_desc
+            if description and description.strip() and description.strip() not in old_desc:
+                timestamp = datetime.now().strftime('%d/%m/%Y %H:%M')
+                separator = "\n" + "-"*20 + "\n" if old_desc else ""
+                updated_desc = f"{old_desc}{separator}[{timestamp}] {description.strip()}"
+
+            # อัปเดตข้อมูล
+            update_data = {
+                "fish_type": updated_fish,
+                "image_url": updated_images,
+                "description": updated_desc
+            }
+            
+            # ใช้ช่วงพิกัด (Epsilon) แทนการใช้ค่าเท่ากันเป๊ะๆ เพื่อเลี่ยงปัญหาทศนิยมคลาดเคลื่อน
+            epsilon = 0.00001
+            res_update = run_with_retry(
+                lambda: supabase_db.table("spots").update(update_data)\
+                    .eq("name", target_row['name'])\
+                    .gte("lat", target_row['lat'] - epsilon)\
+                    .lte("lat", target_row['lat'] + epsilon)\
+                    .gte("lon", target_row['lon'] - epsilon)\
+                    .lte("lon", target_row['lon'] + epsilon),
+                "อัปเดตข้อมูลจุดเดิม"
+            )
+                
+            if res_update.data:
+                dist_info = f" (ห่าง {target_row['distance']:.1f} ม.)" if 'distance' in target_row else ""
+                st.success(f"อัปเดตข้อมูลในจุดเดิม: {target_row['name']}{dist_info} เรียบร้อย! (มีข้อมูลในระบบแล้ว)")
+                # แสดงผลข้อมูลที่อัปเดตเพื่อตรวจสอบ
+                with st.expander("ดูข้อมูลที่บันทึกสำเร็จ"):
+                    st.write(res_update.data[0])
+                return True
+            else:
+                st.warning("⚠️ พบจุดเดิมในแอปแต่ไม่สามารถระบุแถวในฐานข้อมูลเพื่ออัปเดตได้ (พิกัดในเครื่องกับใน DB อาจไม่ตรงกันในระดับทศนิยม)")
+                return False
+
+        else:
+            # --- กรณีเป็นจุดใหม่: ให้ "เพิ่ม" แถวใหม่ ---
+            res_insert = run_with_retry(
+                lambda: supabase_db.table("spots").insert({
+                    "name": name, "lat": lat, "lon": lon, 
+                    "fish_type": fish_type, "description": description, "image_url": ",".join(images_urls)
+                }),
+                "บันทึกจุดใหม่"
+            )
+            
+            if res_insert.data:
+                st.success("บันทึกจุดตกปลาใหม่เรียบร้อย!")
+                with st.expander("ดูข้อมูลที่บันทึกใหม่"):
+                    st.write(res_insert.data[0])
+                return True
+            else:
+                # ในบางกรณี insert อาจสำเร็จแต่ไม่คืนค่าข้อมูล (เช่น RLS หรือ configuration)
+                # เราจะให้ True ไว้ก่อนถ้าไม่มี Exception
+                st.info("ส่งข้อมูลไปที่เซิร์ฟเวอร์แล้ว (รอการตรวจสอบข้อมูลในอาทิตย์ถัดไปหากยังไม่ปรากฏ)")
+                return True
+    except Exception as e:
+        st.error(f"Database Error: {str(e)}")
+        st.code(traceback.format_exc())
+        return False
+
+# --- ฟังก์ชันนับสถิติปลา ---
+def get_spot_fish_stats(fish_string):
+    if not fish_string:
+        return "ยังไม่มีข้อมูลปลา"
+    
+    # แยกรายชื่อปลาและนับจำนวน
+    fish_list = [f.strip() for f in str(fish_string).split(",") if f.strip()]
+    if not fish_list:
+        return "ยังไม่มีข้อมูลปลา"
+    
+    # นับความถี่
+    from collections import Counter
+    counts = Counter(fish_list)
+    
+    # สร้างข้อความแสดงสถิติแบบบรรทัด
+    stat_text = "<br>".join([f"• {fish}: {count} ครั้ง" for fish, count in counts.items()])
+    return stat_text
 
 # --- 3. SESSION STATE ---
 st.set_page_config(page_title="Thai Fishing Pro", layout="wide")
@@ -133,8 +303,8 @@ with st.sidebar.expander("📍 ป้อนพิกัดเอง"):
 
 all_data = load_spots()
 
-with st.sidebar.form("add_spot"):
-    st.subheader("➕ ปักหมุดหมายใหม่")
+with st.sidebar.form("add_spot_form", clear_on_submit=True):
+    st.subheader("➕ เพิ่มข้อมูลการตกปลา")
     
     # แสดงพิกัดที่จะใช้บันทึก
     gps_status = "✅ GPS" if (gps_raw and 'lat' in gps_raw) else "📍 พิกัดปัจจุบัน"
@@ -144,16 +314,11 @@ with st.sidebar.form("add_spot"):
     fish = st.text_input("ปลาที่พบ", key="spot_fish")
     description = st.text_input("รายละเอียด", key="spot_desc")
     files = st.file_uploader("รูปภาพ", type=['jpg','png','jpeg'], accept_multiple_files=True, key="spot_images")
-    if st.form_submit_button("บันทึกพิกัดนี้"):
-        # ตรวจสอบการเชื่อมต่อ Supabase
-        if 'supabase' not in globals() or supabase is None:
-            st.error("ไม่สามารถเชื่อมต่อ Supabase ได้ กรุณาตรวจสอบการตั้งค่า")
+
+    if st.form_submit_button("บันทึกข้อมูล", use_container_width=True):
         # ตรวจสอบว่ามีชื่อจุดตกปลาหรือไม่
-        elif not name or not name.strip():
+        if not name or not name.strip():
             st.error("กรุณากรอกชื่อจุดตกปลา")
-        # ตรวจสอบการตั้งค่า Service Key
-        elif not db_configured:
-            st.error("❌ ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_KEY")
         else:
             try:
                 # ใช้ GPS ถ้ามี ไม่เช่นนั้นใช้ session state
@@ -173,122 +338,82 @@ with st.sidebar.form("add_spot"):
                     total_files = len(files)
                     progress_bar = st.progress(0)
                     status_text = st.empty()
+
                     
                     for idx, f in enumerate(files):
                         try:
                             status_text.text(f"กำลังอัปโหลดรูป {idx + 1}/{total_files}: {f.name}")
-                            
+                                
                             # ตรวจสอบขนาดไฟล์ (จำกัดที่ 10MB)
                             if f.size > 10 * 1024 * 1024:
                                 st.warning(f"ไฟล์ {f.name} ใหญ่เกินไป (มากกว่า 10MB) จะถูกย่อขนาดอัตโนมัติ")
-                            
+                                
                             # อ่านและประมวลผลรูปภาพ
                             img = Image.open(f).convert("RGB")
                             img.thumbnail((800, 800), Image.Resampling.LANCZOS)
-                            
+                                
                             # สร้าง buffer และบันทึกรูป
                             buf = io.BytesIO()
                             img.save(buf, format='JPEG', quality=85)
                             buf.seek(0)  # Reset buffer position
-                            
+                                
                             # สร้างชื่อไฟล์ที่ปลอดภัย
                             safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', f.name)
                             timestamp = datetime.now().strftime('%Y%m%d%H%M%S_%f')
                             fname = f"{timestamp}_{safe_name}"
-                            
+                                
                             # อัปโหลดไปยัง Supabase Storage (ใช้ supabase_storage ที่มีสิทธิ์ bypass RLS)
                             upload_result = supabase_storage.storage.from_("fishing_images").upload(
                                 fname, 
                                 buf.getvalue(),
                                 file_options={"content-type": "image/jpeg", "upsert": "true"}
                             )
-                            
+                                
                             # ดึง public URL
                             public_url = supabase_storage.storage.from_("fishing_images").get_public_url(fname)
                             # แปลง http เป็น https
                             if public_url.startswith("http://"):
                                 public_url = public_url.replace("http://", "https://")
-                            
+                                
                             urls.append(public_url)
-                            
+                                
                             # อัปเดต progress
                             progress_bar.progress((idx + 1) / total_files)
-                            
+                                
                         except Exception as e:
                             error_msg = str(e)
                             # ตรวจสอบว่าเป็น RLS error หรือไม่
                             if "row-level security policy" in error_msg.lower() or "unauthorized" in error_msg.lower():
                                 st.error(f"❌ ไม่สามารถอัปโหลดรูป {f.name} เนื่องจาก Row Level Security (RLS)")
-                                st.warning("""
-                                **วิธีแก้ไข:**
-                                1. ไปที่ Supabase Dashboard → Storage → Policies
-                                2. ตั้งค่า Policy สำหรับ bucket `fishing_images` ให้อนุญาตการอัปโหลด
-                                3. หรือเพิ่ม `SUPABASE_SERVICE_KEY` ใน Streamlit secrets เพื่อ bypass RLS
                                 
-                                **ตั้งค่า Service Key:**
-                                - ไปที่ Supabase Dashboard → Settings → API
-                                - คัดลอก Service Role Key (secret)
-                                - เพิ่มใน Streamlit: `.streamlit/secrets.toml` → `SUPABASE_SERVICE_KEY = "your-service-key"`
-                                """)
                             else:
                                 st.error(f"ไม่สามารถอัปโหลดรูป {f.name}: {error_msg}")
                             with st.expander(f"รายละเอียดข้อผิดพลาด - {f.name}"):
                                 st.code(traceback.format_exc())
-                    
+
                     # ลบ progress bar และ status text
                     progress_bar.empty()
                     status_text.empty()
-                    
+                        
                     if urls:
                         st.success(f"อัปโหลดรูปภาพ {len(urls)}/{total_files} ไฟล์สำเร็จ")
                 
-                # บันทึกข้อมูลจุดตกปลา (ใช้ supabase_db ที่มีสิทธิ์ bypass RLS)
-                insert_data = {
-                    "name": name.strip(),
-                    "lat": use_lat,
-                    "lon": use_lon,
-                    "description": (description or "").strip(),
-                    "fish_type": (fish or "").strip(),
-                    "image_url": ",".join(urls) if urls else ""
-                }
                 
-                # ตรวจสอบว่า supabase_db พร้อมใช้งานหรือไม่
-                if 'supabase_db' not in globals() or supabase_db is None:
-                    st.error("ไม่สามารถเชื่อมต่อ Supabase Database ได้")
-                    st.stop()
-                
-                result = supabase_db.table("spots").insert(insert_data).execute()
-                
-                if result.data:
-                    st.success(f"บันทึกจุดตกปลา '{name}' สำเร็จ! (พิกัด: {use_lat:.4f}, {use_lon:.4f})")
-                    if urls:
-                        st.info(f"อัปโหลดรูปภาพ {len(urls)} ไฟล์สำเร็จ")
-                    # รีเฟรชข้อมูล
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error("บันทึกข้อมูลไม่สำเร็จ")
-                    
+                        
             except Exception as e:
-                error_msg = str(e)
-                # ตรวจสอบว่าเป็น RLS error หรือไม่
-                if "row-level security policy" in error_msg.lower() or "42501" in error_msg:
-                    st.error("❌ การบันทึกข้อมูลล้มเหลวเนื่องจาก Row Level Security (RLS)")
-                    st.warning("""
-                    **วิธีแก้ไข:**
-                    1. ไปที่ Supabase Dashboard → Settings → API
-                    2. คัดลอก Service Role Key (secret key)
-                    3. เพิ่มใน `.streamlit/secrets.toml`: `SUPABASE_SERVICE_KEY = "your-key"`
-                    4. รีสตาร์ทแอป
-                    
-                    **หรือตั้งค่า RLS Policy:**
-                    - ไปที่ Supabase Dashboard → Authentication → Policies
-                    - ตั้งค่า Policy สำหรับ table "spots" ให้อนุญาตการ insert
-                    """)
-                else:
-                    st.error(f"เกิดข้อผิดพลาด: {error_msg}")
-                with st.expander("รายละเอียดข้อผิดพลาด"):
-                    st.code(traceback.format_exc())
+                    error_msg = str(e)
+                    # ตรวจสอบว่าเป็น RLS error หรือไม่
+                    if "row-level security policy" in error_msg.lower() or "42501" in error_msg:
+                        st.error("❌ การบันทึกข้อมูลล้มเหลวเนื่องจาก Row Level Security (RLS)")
+                       
+                    else:
+                        st.error(f"เกิดข้อผิดพลาด: {error_msg}")
+                    with st.expander("รายละเอียดข้อผิดพลาด"):
+                        st.code(traceback.format_exc())
+        
+        if save_fishing_spot(name, fish, description, urls, use_lat, use_lon):
+            st.cache_data.clear()
+            st.rerun()
 
 # --- 5. STABLE MAP DISPLAY ---
 st.subheader("🗺️ แผนที่พิกัดตกปลา")
@@ -307,6 +432,9 @@ def render_fishing_map(df):
     ).add_to(m)
 
     for _, row in df.iterrows():
+
+        spot_stats = get_spot_fish_stats(row['fish_type'])
+
         # ดึงข้อมูลที่ Cache ไว้ (เร็วและไม่ทำให้แผนที่กระพริบ)
         weather_now, weather_fore = get_full_weather(row['lat'], row['lon'])
         water_lv = get_water_info(row['name'])
@@ -334,6 +462,10 @@ def render_fishing_map(df):
             {img_html}
             <h4 style='margin: 8px 0 2px 0; color: #1a73e8;'>{name}</h4>
             <b>🐟 ปลา:</b> {fish_type}<br>
+            <div style='background: #e8f0fe; padding: 8px; border-radius: 5px; margin-top: 5px;'>
+                <b>📊 สถิติการเจอปลาที่นี่:</b><br>
+                <small>{spot_stats}</small>
+            </div>
             <b>รายละเอียด:</b> {description}<br>
             <b>🌡️ ตอนนี้:</b> {weather_now}<br>
             <b>💧 น้ำ:</b> {water_lv}
@@ -354,6 +486,15 @@ def render_fishing_map(df):
     st_folium(m, width="100%", height=550, key="stable_fishing_map", returned_objects=[])
 
 render_fishing_map(all_data)
+st.button("🔄 โหลดข้อมูลใหม่ (Clear Cache)", on_click=st.cache_data.clear)
+
+# --- 5.5 DATA PREVIEW (DEBUG) ---
+with st.expander("🔍 ตรวจสอบข้อมูลดิบจากฐานข้อมูล (Debug)"):
+    if not all_data.empty:
+        st.write("ข้อมูลที่แอปดึงมาได้ในขณะนี้:")
+        st.dataframe(all_data, use_container_width=True)
+    else:
+        st.info("ฐานข้อมูลว่างเปล่า (หรือแอปไม่มีสิทธิ์เข้าถึงข้อมูลด้วย RLS)")
 
 # --- 6. SPOT MANAGEMENT ---
 st.divider()
